@@ -214,6 +214,12 @@ Supported filters: `png`, `gif`, `jpg`, `jpeg`, `svg`
 - Go 1.24+
 - zipreport-server (for PDF generation)
 
+## Sponsors
+
+This project is sponsored by [Blackshield](https://blackshield.io).
+
 ## License
 
-MIT
+SPDX-License-Identifier: MIT
+
+[MIT](LICENSE)

@@ -72,9 +72,41 @@ jobs:
           name: zipreport_${{ matrix.os }}_${{ matrix.arch }}
           path: zipreport_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.ext }}
 
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SPDX SBOM
+        run: syft . -o spdx-json=zipreport-sbom.spdx.json
+
+      - name: Generate CycloneDX SBOM
+        run: syft . -o cyclonedx-json=zipreport-sbom.cdx.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            zipreport-sbom.spdx.json
+            zipreport-sbom.cdx.json
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, sbom]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -89,6 +121,7 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec mv {} release/ \;
+          find artifacts -type f -name "*.json" -exec mv {} release/ \;
           cd release && sha256sum * > checksums.txt
 
       - name: Create Release

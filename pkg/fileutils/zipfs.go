@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"path"
-	"strings"
 )
 
 var (
@@ -292,14 +291,4 @@ func writeFile(filename string, data []byte) error {
 	// This will be implemented using os.WriteFile
 	// For now, we import it inline
 	return writeFileImpl(filename, data)
-}
-
-// Helper function for path operations
-func hasPathPrefix(p, prefix string) bool {
-	p = normalizePath(p)
-	prefix = normalizePath(prefix)
-	if prefix == "" || prefix == "." {
-		return true
-	}
-	return strings.HasPrefix(p, prefix+"/") || p == prefix
 }

@@ -134,7 +134,7 @@ func (r *ReportFile) exportToZip() ([]byte, error) {
 			if err != nil {
 				continue
 			}
-			zfs.Add(filename, content, true)
+			_ = zfs.Add(filename, content, true)
 		}
 	}
 
@@ -142,7 +142,7 @@ func (r *ReportFile) exportToZip() ([]byte, error) {
 	if r.fs.Exists(FileReport) {
 		content, err := r.fs.GetBytes(FileReport)
 		if err == nil {
-			zfs.Add(FileReport, content, true)
+			_ = zfs.Add(FileReport, content, true)
 		}
 	}
 
@@ -150,7 +150,7 @@ func (r *ReportFile) exportToZip() ([]byte, error) {
 	if r.fs.Exists(FileData) {
 		content, err := r.fs.GetBytes(FileData)
 		if err == nil {
-			zfs.Add(FileData, content, true)
+			_ = zfs.Add(FileData, content, true)
 		}
 	}
 

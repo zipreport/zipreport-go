@@ -8,7 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "1.0.0"
+// version is set via ldflags at build time
+var version = "1.0.0"
 
 var rootCmd = &cobra.Command{
 	Use:   "zipreport",

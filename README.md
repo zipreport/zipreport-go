@@ -119,7 +119,30 @@ zipreport-go/
 │   ├── template/      # Miya template rendering
 │   ├── processor/     # PDF/MIME backends
 │   └── api/           # High-level API
-└── examples/          # Usage examples
+└── examples/          # Standalone usage examples
+```
+
+## Examples
+
+Each example is a standalone Go module with its own dependencies and local template files.
+
+| Example | Description |
+|---------|-------------|
+| [simple](./examples/simple) | Basic PDF generation |
+| [newsletter](./examples/newsletter) | MIME email generation |
+| [filter_example](./examples/filter_example) | Dynamic image filters |
+| [print_css_chrome](./examples/print_css_chrome) | CSS Paged Media |
+| [pagedjs](./examples/pagedjs) | PagedJS with dynamic charts |
+| [analytics_dashboard](./examples/analytics_dashboard) | Dashboard with charts |
+| [executive_report](./examples/executive_report) | Business report |
+| [product_brochure](./examples/product_brochure) | Product brochure |
+
+Run an example:
+
+```bash
+cd examples/simple
+export ZIPREPORT_URL="http://localhost:6543"
+go run main.go output.pdf
 ```
 
 ## Packages

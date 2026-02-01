@@ -1,0 +1,44 @@
+.PHONY: test test-verbose test-coverage lint build install clean help
+
+# Default target
+help:
+	@echo "Available targets:"
+	@echo "  test          - Run tests"
+	@echo "  test-verbose  - Run tests with verbose output"
+	@echo "  test-coverage - Run tests with coverage report"
+	@echo "  lint          - Run golangci-lint"
+	@echo "  build         - Build the CLI"
+	@echo "  install       - Install the CLI"
+	@echo "  clean         - Remove build artifacts"
+
+# Run tests
+test:
+	go test ./pkg/...
+
+# Run tests with verbose output
+test-verbose:
+	go test -v ./pkg/...
+
+# Run tests with coverage
+test-coverage:
+	go test -coverprofile=coverage.out ./pkg/...
+	go tool cover -func=coverage.out
+	@echo ""
+	@echo "To view HTML coverage report: go tool cover -html=coverage.out"
+
+# Run linter
+lint:
+	golangci-lint run
+
+# Build CLI
+build:
+	go build -o bin/zipreport ./cmd/zipreport
+
+# Install CLI
+install:
+	go install ./cmd/zipreport
+
+# Clean build artifacts
+clean:
+	rm -rf bin/
+	rm -f coverage.out

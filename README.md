@@ -238,9 +238,41 @@ data := map[string]interface{}{
 
 Supported filters: `png`, `gif`, `jpg`, `jpeg`, `svg`
 
+## Development
+
+### Using Make
+
+```bash
+make help           # Show available targets
+make test           # Run tests
+make test-verbose   # Run tests with verbose output
+make test-coverage  # Run tests with coverage report
+make lint           # Run golangci-lint
+make build          # Build CLI to bin/
+make install        # Install CLI
+make clean          # Remove build artifacts
+```
+
+### Manual Commands
+
+```bash
+# Run tests
+go test ./pkg/...
+
+# Run with coverage
+go test ./pkg/... -coverprofile=coverage.out
+go tool cover -func=coverage.out
+
+# Build CLI
+go build ./cmd/zipreport
+
+# Run linter
+golangci-lint run
+```
+
 ## Requirements
 
-- Go 1.24+
+- Go 1.21+
 - zipreport-server (for PDF generation)
 
 ## Sponsors

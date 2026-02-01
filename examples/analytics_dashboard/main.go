@@ -1,9 +1,13 @@
-// Package main demonstrates an analytics dashboard with ZipReport.
+// Analytics Dashboard example demonstrates a dashboard with ZipReport.
 //
 // This example shows how to:
 //   - Single-page dashboard layout with PagedJS
 //   - Multiple chart types (line, bar)
 //   - Dynamic chart generation using gonum/plot
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -254,11 +258,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/analytics_dashboard"
-
+	// Build report from local template directory
 	fmt.Println("Building dashboard template...")
-	zfs, buildResult := report.BuildZipFs(reportPath, nil)
+	zfs, buildResult := report.BuildZipFs("template", nil)
 	if !buildResult.Success() {
 		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)
@@ -271,11 +273,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load data from data.json
-	dataPath := reportPath + "/data.json"
-	dataBytes, err := os.ReadFile(dataPath)
+	// Load data from template's data.json
+	dataBytes, err := zpt.GetBytes("data.json")
 	if err != nil {
-		fmt.Printf("Error reading data.json: %v\n", err)
+		fmt.Printf("Error loading data.json: %v\n", err)
 		os.Exit(1)
 	}
 

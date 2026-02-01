@@ -1,9 +1,13 @@
-// Package main demonstrates PagedJS pagination with ZipReport.
+// PagedJS example demonstrates PagedJS pagination with ZipReport.
 //
 // This example shows how to:
 //   - Use PagedJS for advanced pagination
 //   - Generate charts dynamically using gonum/plot
 //   - Use JS event waiting for PagedJS rendering
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -135,11 +139,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/pagedjs/example_report"
-
+	// Build report from local template directory
 	fmt.Println("Building PagedJS report template...")
-	zfs, buildResult := report.BuildZipFs(reportPath, nil)
+	zfs, buildResult := report.BuildZipFs("template", nil)
 	if !buildResult.Success() {
 		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)

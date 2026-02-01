@@ -1,9 +1,13 @@
-// Package main demonstrates basic ZipReport usage.
+// Simple example demonstrates basic ZipReport usage.
 //
 // This example shows how to:
-//   - Load a report from a .zpt file
+//   - Load a report from a template directory
 //   - Provide template data
 //   - Render to PDF using zipreport-server
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -38,30 +42,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Find the report file - try multiple locations
-	reportPath := "simple.zpt"
-	possiblePaths := []string{
-		"simple.zpt",
-		"examples/simple/simple.zpt",
-		"./examples/simple/simple.zpt",
-	}
-
-	found := false
-	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			reportPath = p
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		fmt.Println("Missing report file. Build it with: zipreport build <template_dir> simple.zpt")
+	// Build report from local template directory
+	fmt.Println("Building report template...")
+	zfs, buildResult := report.BuildZipFs("template", nil)
+	if !buildResult.Success() {
+		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)
 	}
 
-	// Load report from file
-	zpt, err := report.LoadFile(reportPath)
+	// Load ReportFile from in-memory zipfs
+	zpt, err := report.LoadZipFs(zfs)
 	if err != nil {
 		fmt.Printf("Failed to load report: %v\n", err)
 		os.Exit(1)
@@ -75,6 +65,7 @@ func main() {
 	}
 
 	// Render using zipreport-server processor
+	fmt.Println("Generating PDF...")
 	client := api.NewZipReport(serverURL, apiKey)
 	result := client.RenderDefaults(zpt, reportData, nil)
 

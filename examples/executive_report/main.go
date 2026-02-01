@@ -1,9 +1,13 @@
-// Package main demonstrates chart generation with ZipReport.
+// Executive Report example demonstrates chart generation with ZipReport.
 //
 // This example shows how to:
 //   - Generate charts dynamically at render time using gonum/plot
 //   - Use ReportJob for custom configuration
 //   - Enable JavaScript events for PagedJS
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -178,10 +182,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/executive_report"
+	// Build report from local template directory
 	fmt.Println("Building report template...")
-	zfs, buildResult := report.BuildZipFs(reportPath, nil)
+	zfs, buildResult := report.BuildZipFs("template", nil)
 	if !buildResult.Success() {
 		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)
@@ -194,7 +197,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load data from data.json
+	// Load data from template's data.json
 	dataBytes, err := zpt.GetBytes("data.json")
 	if err != nil {
 		fmt.Printf("Error loading data.json: %v\n", err)

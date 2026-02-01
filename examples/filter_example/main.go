@@ -1,9 +1,13 @@
-// Package main demonstrates dynamic image generation with ZipReport filters.
+// Filter example demonstrates dynamic image generation with ZipReport filters.
 //
 // This example shows how to:
 //   - Use image filters (png, gif, jpg, svg)
 //   - Generate images dynamically at render time
 //   - Pass callable functions to templates
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -115,9 +119,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/filter_example"
-	zfs, result := report.BuildZipFs(reportPath, nil)
+	// Build report from local template directory
+	fmt.Println("Building filter example template...")
+	zfs, result := report.BuildZipFs("template", nil)
 	if !result.Success() {
 		fmt.Printf("Error building report: %s\n", result.Error())
 		os.Exit(1)
@@ -143,6 +147,7 @@ func main() {
 	}
 
 	// Render using zipreport-server processor
+	fmt.Println("Generating PDF with dynamic images...")
 	client := api.NewZipReport(serverURL, apiKey)
 	renderResult := client.RenderDefaults(zpt, reportData, nil)
 

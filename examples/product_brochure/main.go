@@ -1,9 +1,13 @@
-// Package main demonstrates a product brochure with ZipReport.
+// Product Brochure example demonstrates a brochure with ZipReport.
 //
 // This example shows how to:
 //   - Software product brochure template with PagedJS
 //   - Feature comparison charts using gonum/plot
 //   - Pricing tiers and testimonials
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -115,13 +119,6 @@ func generateFeatureChart(data interface{}) []byte {
 	p.X.Label.TextStyle.Font.Size = vg.Points(9)
 
 	vals := make(plotter.Values, len(scores))
-	colors := []color.RGBA{
-		{R: 99, G: 102, B: 241, A: 255},
-		{R: 6, G: 182, B: 212, A: 255},
-		{R: 16, G: 185, B: 129, A: 255},
-		{R: 245, G: 158, B: 11, A: 255},
-		{R: 244, G: 63, B: 94, A: 255},
-	}
 
 	for i, v := range scores {
 		vals[i] = toFloat(v)
@@ -129,7 +126,7 @@ func generateFeatureChart(data interface{}) []byte {
 
 	bars, _ := plotter.NewBarChart(vals, vg.Points(25))
 	bars.Horizontal = true
-	bars.Color = colors[0]
+	bars.Color = color.RGBA{R: 99, G: 102, B: 241, A: 255}
 
 	p.Add(bars)
 
@@ -189,11 +186,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/product_brochure"
-
+	// Build report from local template directory
 	fmt.Println("Building brochure template...")
-	zfs, buildResult := report.BuildZipFs(reportPath, nil)
+	zfs, buildResult := report.BuildZipFs("template", nil)
 	if !buildResult.Success() {
 		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)
@@ -206,11 +201,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load data from data.json
-	dataPath := reportPath + "/data.json"
-	dataBytes, err := os.ReadFile(dataPath)
+	// Load data from template's data.json
+	dataBytes, err := zpt.GetBytes("data.json")
 	if err != nil {
-		fmt.Printf("Error reading data.json: %v\n", err)
+		fmt.Printf("Error loading data.json: %v\n", err)
 		os.Exit(1)
 	}
 

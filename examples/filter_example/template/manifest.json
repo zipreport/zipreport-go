@@ -1,0 +1,16 @@
+{
+  "author": "zipreport",
+  "title": "Jinja Filter example",
+  "description": "Dynamic jinja filter examples",
+  "version": "1.0",
+  "params": [
+    "png_graphic",
+    "png_graphic_data",
+    "jpg_graphic",
+    "jpg_graphic_data",
+    "gif_graphic",
+    "gif_graphic_data",
+    "svg_graphic",
+    "svg_graphic_data"
+  ]
+}

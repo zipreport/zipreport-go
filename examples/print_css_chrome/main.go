@@ -1,10 +1,14 @@
-// Package main demonstrates CSS Paged Media features with Chromium.
+// Print CSS Chrome example demonstrates CSS Paged Media features with Chromium.
 //
 // This example shows how to:
 //   - Use CSS @page rules with margin boxes
 //   - Page counters (counter(page), counter(pages))
 //   - Page breaks (break-before, break-after, break-inside)
 //   - Widows and orphans control
+//
+// Usage:
+//
+//	go run main.go output.pdf
 package main
 
 import (
@@ -40,10 +44,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/print_css_chrome"
-
-	zfs, buildResult := report.BuildZipFs(reportPath, nil)
+	// Build report from local template directory
+	fmt.Println("Building print CSS template...")
+	zfs, buildResult := report.BuildZipFs("template", nil)
 	if !buildResult.Success() {
 		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)
@@ -56,11 +59,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load data from data.json
-	dataPath := reportPath + "/data.json"
-	dataBytes, err := os.ReadFile(dataPath)
+	// Load data from template's data.json
+	dataBytes, err := zpt.GetBytes("data.json")
 	if err != nil {
-		fmt.Printf("Error reading data.json: %v\n", err)
+		fmt.Printf("Error loading data.json: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -71,6 +73,7 @@ func main() {
 	}
 
 	// Render using zipreport-server processor
+	fmt.Println("Generating PDF...")
 	client := api.NewZipReport(serverURL, apiKey)
 	result := client.RenderDefaults(zpt, reportData, nil)
 

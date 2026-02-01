@@ -1,9 +1,13 @@
-// Package main demonstrates MIME email generation with ZipReport.
+// Newsletter example demonstrates MIME email generation with ZipReport.
 //
 // This example shows how to:
 //   - Generate MIME email messages from templates
 //   - Embed resources in the email
 //   - Use the MIMEReport processor
+//
+// Usage:
+//
+//	go run main.go output.eml
 package main
 
 import (
@@ -29,9 +33,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build report from template directory (relative to project root)
-	reportPath := "../zipreport/examples/reports/newsletter"
-	zfs, buildResult := report.BuildZipFs(reportPath, nil)
+	// Build report from local template directory
+	fmt.Println("Building newsletter template...")
+	zfs, buildResult := report.BuildZipFs("template", nil)
 	if !buildResult.Success() {
 		fmt.Printf("Error building report: %s\n", buildResult.Error())
 		os.Exit(1)
@@ -64,6 +68,7 @@ func main() {
 	}
 
 	// Render using MIME processor
+	fmt.Println("Generating MIME email...")
 	client := api.NewMIMEReport(
 		processor.WithSubject("Monthly Newsletter"),
 		processor.WithFrom("newsletter@example.com"),

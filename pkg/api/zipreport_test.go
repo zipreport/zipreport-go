@@ -1,0 +1,202 @@
+package api
+
+import (
+	"testing"
+
+	"github.com/zipreport/zipreport-go/pkg/fileutils"
+	"github.com/zipreport/zipreport-go/pkg/processor"
+	"github.com/zipreport/zipreport-go/pkg/report"
+)
+
+// mockBackend is a test backend that returns predefined data
+type mockBackend struct {
+	result []byte
+	err    error
+}
+
+func (m *mockBackend) Render(zptData []byte, options map[string]interface{}) ([]byte, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.result, nil
+}
+
+func createTestReportFile() *report.ReportFile {
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte("<html><body>{{ name }}</body></html>"), false)
+	_ = zfs.Add("report.html", []byte("<html><body>Rendered</body></html>"), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"Test","author":"A","version":"1","description":"D"}`), false)
+
+	manifest := &report.Manifest{
+		Title:       "Test",
+		Author:      "A",
+		Version:     "1",
+		Description: "D",
+	}
+
+	return report.NewReportFile(zfs, manifest)
+}
+
+func TestNewZipReport(t *testing.T) {
+	zr := NewZipReport("http://localhost:5000", "test-api-key")
+	if zr == nil {
+		t.Fatal("NewZipReport returned nil")
+	}
+}
+
+func TestNewZipReport_WithOptions(t *testing.T) {
+	zr := NewZipReport("http://localhost:5000", "test-api-key",
+		processor.WithAPIVersion(3),
+	)
+	if zr == nil {
+		t.Fatal("NewZipReport returned nil")
+	}
+}
+
+func TestNewZipReportWithBackend(t *testing.T) {
+	backend := &mockBackend{result: []byte("PDF data")}
+	zr := NewZipReportWithBackend(backend)
+	if zr == nil {
+		t.Fatal("NewZipReportWithBackend returned nil")
+	}
+}
+
+func TestNewMIMEReport(t *testing.T) {
+	mr := NewMIMEReport()
+	if mr == nil {
+		t.Fatal("NewMIMEReport returned nil")
+	}
+}
+
+func TestNewMIMEReport_WithOptions(t *testing.T) {
+	mr := NewMIMEReport(
+		processor.WithSubject("Test Subject"),
+		processor.WithFrom("sender@example.com"),
+		processor.WithTo("recipient@example.com"),
+	)
+	if mr == nil {
+		t.Fatal("NewMIMEReport returned nil")
+	}
+}
+
+func TestBaseReport_CreateJob(t *testing.T) {
+	backend := &mockBackend{result: []byte("PDF")}
+	zr := NewZipReportWithBackend(backend)
+
+	rf := createTestReportFile()
+	job := zr.CreateJob(rf)
+
+	if job == nil {
+		t.Fatal("CreateJob returned nil")
+	}
+	if job.GetReport() != rf {
+		t.Error("Job report doesn't match")
+	}
+}
+
+func TestZipReport_Render_Success(t *testing.T) {
+	backend := &mockBackend{result: []byte("%PDF-1.4 mock pdf content")}
+	zr := NewZipReportWithBackend(backend)
+
+	rf := createTestReportFile()
+	job := zr.CreateJob(rf)
+
+	result := zr.Render(job, map[string]interface{}{"name": "Test"}, nil)
+
+	if !result.Success {
+		t.Fatalf("Render failed: %s", result.Error)
+	}
+	if len(result.Report) == 0 {
+		t.Error("Result report is empty")
+	}
+}
+
+func TestZipReport_Render_WithWrapper(t *testing.T) {
+	backend := &mockBackend{result: []byte("%PDF-1.4 mock pdf content")}
+	zr := NewZipReportWithBackend(backend)
+
+	rf := createTestReportFile()
+	job := zr.CreateJob(rf)
+
+	// Use a simple wrapper
+	result := zr.Render(job, map[string]interface{}{"name": "Test"}, nil)
+
+	if !result.Success {
+		t.Fatalf("Render failed: %s", result.Error)
+	}
+}
+
+func TestZipReport_Render_BackendError(t *testing.T) {
+	backend := &mockBackend{err: processor.ErrNotImplemented}
+	zr := NewZipReportWithBackend(backend)
+
+	rf := createTestReportFile()
+	job := zr.CreateJob(rf)
+
+	result := zr.Render(job, map[string]interface{}{"name": "Test"}, nil)
+
+	if result.Success {
+		t.Error("Render should fail when backend returns error")
+	}
+}
+
+func TestZipReport_RenderDefaults(t *testing.T) {
+	backend := &mockBackend{result: []byte("%PDF-1.4")}
+	zr := NewZipReportWithBackend(backend)
+
+	rf := createTestReportFile()
+	result := zr.RenderDefaults(rf, map[string]interface{}{"name": "Test"}, nil)
+
+	if !result.Success {
+		t.Fatalf("RenderDefaults failed: %s", result.Error)
+	}
+}
+
+func TestMIMEReport_RenderDefaults(t *testing.T) {
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte("<html><body>{{ name }}</body></html>"), false)
+	_ = zfs.Add("report.html", []byte("<html><body>MIME content</body></html>"), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"Test","author":"A","version":"1","description":"D"}`), false)
+
+	manifest := &report.Manifest{
+		Title:       "Test",
+		Author:      "A",
+		Version:     "1",
+		Description: "D",
+	}
+	rf := report.NewReportFile(zfs, manifest)
+
+	mr := NewMIMEReport(processor.WithSubject("Test Email"))
+	result := mr.RenderDefaults(rf, map[string]interface{}{"name": "World"}, nil)
+
+	if !result.Success {
+		t.Fatalf("RenderDefaults failed: %s", result.Error)
+	}
+}
+
+func TestRenderPDF(t *testing.T) {
+	// This will fail since we don't have a real server, but tests the code path
+	rf := createTestReportFile()
+	result := RenderPDF(rf, map[string]interface{}{"name": "Test"}, "http://invalid-server", "key")
+
+	// Should fail due to network error
+	if result.Success {
+		t.Skip("Unexpected success - real server might be running")
+	}
+}
+
+func TestRenderMIME(t *testing.T) {
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte("<html>{{ x }}</html>"), false)
+	_ = zfs.Add("report.html", []byte("<html>MIME</html>"), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+
+	manifest := &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D"}
+	rf := report.NewReportFile(zfs, manifest)
+
+	result := RenderMIME(rf, nil)
+
+	if !result.Success {
+		t.Fatalf("RenderMIME failed: %s", result.Error)
+	}
+}

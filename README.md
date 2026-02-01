@@ -1,5 +1,11 @@
 # ZipReport Go
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/zipreport/zipreport-go.svg)](https://pkg.go.dev/github.com/zipreport/zipreport-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zipreport/zipreport-go)](https://goreportcard.com/report/github.com/zipreport/zipreport-go)
+[![CI](https://github.com/zipreport/zipreport-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zipreport/zipreport-go/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zipreport/zipreport-go)](https://github.com/zipreport/zipreport-go/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A Go implementation of ZipReport - HTML to PDF report generation using Jinja2-compatible templates.
 
 ## Features

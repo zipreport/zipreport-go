@@ -5,6 +5,7 @@
 [![CI](https://github.com/zipreport/zipreport-go/actions/workflows/ci.yml/badge.svg)](https://github.com/zipreport/zipreport-go/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zipreport/zipreport-go)](https://github.com/zipreport/zipreport-go/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Documentation](https://img.shields.io/badge/docs-zipreport.github.io-blue)](https://zipreport.github.io/zipreport-go/)
 
 A Go implementation of ZipReport - HTML to PDF report generation using Jinja2-compatible templates.
 
@@ -272,7 +273,7 @@ golangci-lint run
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.24+
 - zipreport-server (for PDF generation)
 
 ## Sponsors

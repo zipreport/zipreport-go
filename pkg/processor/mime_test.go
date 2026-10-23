@@ -390,6 +390,7 @@ func TestMIMEProcessor_RejectsControlCharsInCallerHeaders(t *testing.T) {
 		{"from", WithFrom("a@b.c\nBcc: x@evil.test")},
 		{"to", WithTo("ok@b.c", "x@b.c\r\nBcc: y@evil.test")},
 		{"nul", WithFrom("a@b.c\x00")},
+		{"del", WithSubject("a\x7fb")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -561,5 +562,54 @@ func TestMIMEProcessor_HiddenFileNotEmbedded(t *testing.T) {
 		if strings.Contains(string(v), "SECRET") {
 			t.Errorf("part %s contains hidden file content", k)
 		}
+	}
+}
+
+func TestMIMEProcessor_SchemeRefsNotEmbedded(t *testing.T) {
+	html := `<img src="data:image/png;base64,AAAA"><img src="cid:x@y"><link rel="stylesheet" href="https://cdn.example/s.css"><img src="image.png">`
+	r := newTestReport(map[string]string{
+		"report.html": html,
+		"image.png":   "PNG",
+		"cid:x@y":     "TRAP",
+	}, &report.Manifest{Title: "T", Report: "report.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("failed: %s", result.Error)
+	}
+	parts := mimeParts(t, result.Report)
+	if len(parts) != 2 {
+		t.Errorf("parts = %d, want 2", len(parts))
+	}
+	body := string(parts["html"])
+	for _, want := range []string{`src="data:image/png;base64,AAAA"`, `src="cid:x@y"`, `href="https://cdn.example/s.css"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("html missing %s:\n%s", want, body)
+		}
+	}
+}
+
+func TestMIMEProcessor_RootRelativeRefFromSubfolder(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"sub/out.html":  `<img src="/img/a.png">`,
+		"img/a.png":     "RIGHT",
+		"sub/img/a.png": "WRONG",
+	}, &report.Manifest{Title: "T", Report: "sub/out.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("failed: %s", result.Error)
+	}
+	parts := mimeParts(t, result.Report)
+	found := false
+	for k, v := range parts {
+		if k == "html" {
+			continue
+		}
+		found = true
+		if string(v) != "RIGHT" {
+			t.Errorf("embedded part %q = %q, want RIGHT", k, v)
+		}
+	}
+	if !found {
+		t.Error("no embedded part")
 	}
 }

@@ -131,3 +131,42 @@ func TestOverlayFs_RemoveBaseFileFails(t *testing.T) {
 func TestOverlayFs_ImplementsFsInterface(t *testing.T) {
 	var _ FsInterface = NewOverlayFs(NewZipFs())
 }
+
+type rootlessFs struct{ *ZipFs }
+
+func (r rootlessFs) Exists(name string) bool {
+	if isRoot(name) {
+		return false
+	}
+	return r.ZipFs.Exists(name)
+}
+
+func (r rootlessFs) IsDir(name string) bool {
+	if isRoot(name) {
+		return false
+	}
+	return r.ZipFs.IsDir(name)
+}
+
+func (r rootlessFs) List(p string) ([]string, error) {
+	if isRoot(p) {
+		return nil, ErrFileNotFound
+	}
+	return r.ZipFs.List(p)
+}
+
+func TestOverlayFs_RootComesFromBase(t *testing.T) {
+	o := NewOverlayFs(rootlessFs{NewZipFs()})
+	if err := o.Add("x.txt", []byte("x"), false); err != nil {
+		t.Fatal(err)
+	}
+	if o.Exists("") {
+		t.Error("Exists(\"\") = true, want false")
+	}
+	if o.IsDir("") {
+		t.Error("IsDir(\"\") = true, want false")
+	}
+	if _, err := o.List(""); err == nil {
+		t.Error("List(\"\") succeeded, want error")
+	}
+}

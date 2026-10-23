@@ -314,11 +314,18 @@ func TestServerBackend_SecureSSL_LastWins(t *testing.T) {
 }
 
 func TestServerBackend_CustomClientWinsOverSecureSSL(t *testing.T) {
-	custom := &http.Client{}
+	origT := &http.Transport{}
+	custom := &http.Client{Transport: origT}
 	b := NewServerBackend("http://x", "k", WithHTTPClient(custom), WithSecureSSL(false))
 
 	if b.httpClient != custom {
 		t.Error("custom client was replaced")
+	}
+	if custom.Transport != origT {
+		t.Error("custom transport was replaced")
+	}
+	if origT.TLSClientConfig != nil {
+		t.Error("custom transport was modified")
 	}
 }
 

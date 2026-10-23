@@ -44,7 +44,7 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 		}
 	}
 
-	// Backstop: never read more than the limit, whatever the headers say
+	// Defence in depth: archive/zip already rejects entries longer than their declared size
 	remaining := limit
 	for _, f := range files {
 		name := normalizePath(f.Name)

@@ -248,11 +248,16 @@ Backend implementations.
 // Create backend
 backend := processor.NewServerBackend(url, apiKey)
 
-// With options
+// Verify the server's TLS certificate (verification is skipped by default)
 backend := processor.NewServerBackend(url, apiKey,
     processor.WithAPIVersion(2),
     processor.WithTimeout(10 * time.Minute),
     processor.WithSecureSSL(true),
+)
+
+// Or bring your own client (used as given; WithSecureSSL is ignored,
+// WithTimeout applies to a copy)
+backend := processor.NewServerBackend(url, apiKey,
     processor.WithHTTPClient(customClient),
 )
 

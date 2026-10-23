@@ -3,6 +3,8 @@ package processor
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -209,5 +211,110 @@ func TestLocalBackend_Render_NotImplemented(t *testing.T) {
 
 	if err != ErrNotImplemented {
 		t.Errorf("err = %v, want ErrNotImplemented", err)
+	}
+}
+
+// newTLSPDFServer returns a self-signed TLS server that counts requests carrying X-Auth-Key
+func newTLSPDFServer(t *testing.T, hits *int32) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Auth-Key") != "" {
+			atomic.AddInt32(hits, 1)
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestServerBackend_SecureSSL_RejectsUntrustedCert(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ServerOption
+	}{
+		{"secure only", []ServerOption{WithSecureSSL(true)}},
+		{"secure then timeout", []ServerOption{WithSecureSSL(true), WithTimeout(time.Minute)}},
+		{"timeout then secure", []ServerOption{WithTimeout(time.Minute), WithSecureSSL(true)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var hits int32
+			srv := newTLSPDFServer(t, &hits)
+			b := NewServerBackend(srv.URL, "key", tt.opts...)
+			_, err := b.Render([]byte("zpt"), map[string]interface{}{})
+			if err == nil {
+				t.Fatal("expected certificate error, got nil")
+			}
+			if !strings.Contains(err.Error(), "certificate") {
+				t.Errorf("error = %v, want certificate error", err)
+			}
+			if n := atomic.LoadInt32(&hits); n != 0 {
+				t.Errorf("server received %d authenticated requests, want 0", n)
+			}
+		})
+	}
+}
+
+func TestServerBackend_DefaultSkipsVerification(t *testing.T) {
+	var hits int32
+	srv := newTLSPDFServer(t, &hits)
+	b := NewServerBackend(srv.URL, "key")
+	if _, err := b.Render([]byte("zpt"), map[string]interface{}{}); err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Errorf("hits = %d, want 1", n)
+	}
+}
+
+func TestServerBackend_WithTimeout_DoesNotMutateCallerClient(t *testing.T) {
+	custom := &http.Client{Timeout: 3 * time.Second}
+	b := NewServerBackend("http://x", "k", WithHTTPClient(custom), WithTimeout(time.Hour))
+
+	if custom.Timeout != 3*time.Second {
+		t.Errorf("caller client timeout = %v, want 3s", custom.Timeout)
+	}
+	if b.httpClient.Timeout != time.Hour {
+		t.Errorf("backend timeout = %v, want 1h", b.httpClient.Timeout)
+	}
+	if b.httpClient == custom {
+		t.Error("backend should hold a copy of the caller client")
+	}
+}
+
+func TestServerBackend_WithTimeout_NilClient(t *testing.T) {
+	b := NewServerBackend("http://x", "k", WithHTTPClient(nil), WithTimeout(time.Minute))
+
+	if b.httpClient == nil {
+		t.Fatal("httpClient is nil")
+	}
+	if b.httpClient.Timeout != time.Minute {
+		t.Errorf("timeout = %v, want 1m", b.httpClient.Timeout)
+	}
+}
+
+func TestServerBackend_SecureSSL_LastWins(t *testing.T) {
+	var hits int32
+	srv := newTLSPDFServer(t, &hits)
+
+	b := NewServerBackend(srv.URL, "key", WithSecureSSL(true), WithSecureSSL(false))
+	if _, err := b.Render([]byte("zpt"), map[string]interface{}{}); err != nil {
+		t.Errorf("true then false: Render failed: %v", err)
+	}
+
+	b = NewServerBackend(srv.URL, "key", WithSecureSSL(false), WithSecureSSL(true))
+	_, err := b.Render([]byte("zpt"), map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Errorf("false then true: error = %v, want certificate error", err)
+	}
+}
+
+func TestServerBackend_CustomClientWinsOverSecureSSL(t *testing.T) {
+	custom := &http.Client{}
+	b := NewServerBackend("http://x", "k", WithHTTPClient(custom), WithSecureSSL(false))
+
+	if b.httpClient != custom {
+		t.Error("custom client was replaced")
 	}
 }

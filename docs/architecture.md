@@ -192,7 +192,7 @@ Configuration options:
 
 - API version (default: 2)
 - Timeout (default: 5 minutes)
-- SSL verification
+- SSL verification (skipped by default; enable with `WithSecureSSL(true)`; ignored when a custom HTTP client is supplied)
 - Custom HTTP client
 
 #### MIMEProcessor

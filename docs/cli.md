@@ -19,7 +19,7 @@ zipreport build <source_dir> <output.zpt>
 
 **Flags:**
 
-- `-s, --symlinks` - Follow symlinks when building
+- `-s, --symlinks` - Follow symlinks when building (symlinks must resolve inside the template folder; symlinked folders are not supported)
 
 **Examples:**
 
@@ -72,6 +72,7 @@ The debug server:
 
 - Reloads the template on each request (no restart needed)
 - Serves static assets (CSS, JS, images)
+- Never serves hidden files (names starting with a dot)
 - Uses data from `data.json` if present
 - Shows render errors in the browser
 - Has no authentication: only bind to other interfaces on trusted networks

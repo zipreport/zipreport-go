@@ -419,3 +419,14 @@ func TestDiskFs_SubdirAndRootStillResolve(t *testing.T) {
 		t.Errorf("content = %q, want bee", got)
 	}
 }
+
+func TestIsHiddenPath(t *testing.T) {
+	for name, want := range map[string]bool{
+		".env": true, "a/.git/config": true, `a\.env`: true,
+		"a/b.css": false, "a.b/c": false, "x..y": false,
+	} {
+		if got := IsHiddenPath(name); got != want {
+			t.Errorf("IsHiddenPath(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

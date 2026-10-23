@@ -57,7 +57,54 @@ func (dfs *DiskFs) buildPath(name string) (string, error) {
 		return "", ErrInvalidPath
 	}
 
+	// Reject paths that leave the base directory through a symlink
+	if err := dfs.checkResolved(absPath); err != nil {
+		return "", err
+	}
+
 	return absPath, nil
+}
+
+// IsHiddenPath reports whether any segment of name starts with a dot.
+// Both "/" and "\\" count as separators, so Windows-style names cannot bypass it.
+func IsHiddenPath(name string) bool {
+	for _, seg := range strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkResolved fails when absPath, or its deepest existing ancestor, resolves
+// outside the base directory once symlinks are followed. A dangling symlink is
+// rejected because its target cannot be checked.
+func (dfs *DiskFs) checkResolved(absPath string) error {
+	base, err := filepath.EvalSymlinks(dfs.basePath)
+	if err != nil {
+		return err
+	}
+	prefix := strings.TrimSuffix(base, string(filepath.Separator)) + string(filepath.Separator)
+	for p := absPath; ; {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			if resolved != base && !strings.HasPrefix(resolved, prefix) {
+				return ErrInvalidPath
+			}
+			return nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if info, lerr := os.Lstat(p); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return ErrInvalidPath
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return nil
+		}
+		p = parent
+	}
 }
 
 // Get retrieves a file's content as a ReadCloser.
@@ -311,6 +358,9 @@ func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, d
 				return fmt.Errorf("failed to read %s: %w", relName, err)
 			}
 			if err := zfs.Add(relName, content, true); err != nil {
+				if errors.Is(err, ErrInvalidPath) {
+					continue // a name ZipFs refuses (e.g. "a:b.css"); packages must stay portable
+				}
 				return err
 			}
 		}

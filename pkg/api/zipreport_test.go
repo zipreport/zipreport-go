@@ -390,3 +390,23 @@ func TestMIMEReport_Render_UsesRenderedCopy(t *testing.T) {
 		t.Error("render modified the caller's report")
 	}
 }
+
+func TestBaseReport_Render_EscapingOutputRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<p>x</p>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dfs, err := fileutils.NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := report.NewReportFile(dfs, &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D", Report: "../escaped.html"})
+	cb := &capturingBackend{}
+	result := NewZipReportWithBackend(cb).RenderDefaults(rf, nil, nil)
+	if len(cb.payloads) != 0 {
+		t.Errorf("backend received %d payloads, want 0", len(cb.payloads))
+	}
+	if !strings.Contains(result.Error, "invalid path") {
+		t.Errorf("Error = %q, want it to contain %q", result.Error, "invalid path")
+	}
+}

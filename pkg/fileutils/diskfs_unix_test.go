@@ -3,6 +3,7 @@
 package fileutils
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -177,5 +178,101 @@ func TestDiskFs_Snapshot_UnreadableSkipped(t *testing.T) {
 		if zfs.Exists(n) {
 			t.Errorf("%s should be skipped", n)
 		}
+	}
+}
+
+func TestDiskFs_Snapshot_UnportableNamesSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "index.html"), "x")
+	writeTestFile(t, filepath.Join(dir, "a:b.css"), "x")
+	writeTestFile(t, filepath.Join(dir, "1:1.png"), "x")
+	zfs := snapshotOf(t, dir)
+	if !zfs.Exists("index.html") || !zfs.Exists("1:1.png") {
+		t.Errorf("missing expected files: %v", zfs.Files())
+	}
+	if zfs.Exists("a:b.css") {
+		t.Errorf("a:b.css should be skipped: %v", zfs.Files())
+	}
+}
+
+func TestDiskFs_SymlinkOutsideRejected(t *testing.T) {
+	outside := t.TempDir()
+	writeTestFile(t, filepath.Join(outside, "secret.txt"), "secret")
+	writeTestFile(t, filepath.Join(outside, "sub", "x.txt"), "x")
+	base := t.TempDir()
+	for link, target := range map[string]string{
+		"ext.txt": filepath.Join(outside, "secret.txt"),
+		"extdir":  filepath.Join(outside, "sub"),
+		"dang":    filepath.Join(outside, "missing.txt"),
+	} {
+		if err := os.Symlink(target, filepath.Join(base, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dfs, err := NewDiskFs(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"ext.txt", "extdir/x.txt"} {
+		if _, err := dfs.GetBytes(n); !errors.Is(err, ErrInvalidPath) {
+			t.Errorf("GetBytes(%q) err = %v, want ErrInvalidPath", n, err)
+		}
+	}
+	if dfs.Exists("ext.txt") {
+		t.Error("Exists(ext.txt) should be false")
+	}
+	for _, n := range []string{"extdir/new.txt", "dang"} {
+		if err := dfs.Add(n, []byte("w"), true); !errors.Is(err, ErrInvalidPath) {
+			t.Errorf("Add(%q) err = %v, want ErrInvalidPath", n, err)
+		}
+	}
+	for _, p := range []string{filepath.Join(outside, "sub", "new.txt"), filepath.Join(outside, "missing.txt")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s was created outside the base", p)
+		}
+	}
+}
+
+func TestDiskFs_SymlinkInsideAllowed(t *testing.T) {
+	base := t.TempDir()
+	writeTestFile(t, filepath.Join(base, "real.txt"), "r")
+	writeTestFile(t, filepath.Join(base, "sub", "x.txt"), "x")
+	if err := os.Symlink("real.txt", filepath.Join(base, "alias.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sub", filepath.Join(base, "adir")); err != nil {
+		t.Fatal(err)
+	}
+	dfs, err := NewDiskFs(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"alias.txt", "adir/x.txt"} {
+		if _, err := dfs.GetBytes(n); err != nil {
+			t.Errorf("GetBytes(%q): %v", n, err)
+		}
+	}
+	if err := dfs.Add("adir/y.txt", []byte("y"), true); err != nil {
+		t.Errorf("Add(adir/y.txt): %v", err)
+	}
+}
+
+func TestDiskFs_SymlinkedBaseAllowed(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	writeTestFile(t, filepath.Join(real, "index.html"), "x")
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	dfs, err := NewDiskFs(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dfs.GetBytes("index.html"); err != nil {
+		t.Errorf("GetBytes: %v", err)
+	}
+	if err := dfs.Add("out.html", []byte("o"), true); err != nil {
+		t.Errorf("Add: %v", err)
 	}
 }

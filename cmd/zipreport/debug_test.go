@@ -158,3 +158,29 @@ func TestDebugHandler_InvalidDataJSON(t *testing.T) {
 		t.Errorf("body = %q, want invalid data.json", rec.Body.String())
 	}
 }
+
+func TestDebugHandler_HiddenFileNotServed(t *testing.T) {
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{".env", ".git/config"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("TOPSECRET"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &debugHandler{source: dir}
+	for _, p := range []string{"/.env", "/.git/config"} {
+		req := httptest.NewRequest("GET", "/x", nil)
+		req.URL.Path = p
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Errorf("%s: status = %d", p, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "TOPSECRET") {
+			t.Errorf("%s: hidden file served", p)
+		}
+	}
+}

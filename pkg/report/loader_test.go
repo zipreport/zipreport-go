@@ -3,6 +3,8 @@ package report
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -303,5 +305,31 @@ func TestValidateManifest(t *testing.T) {
 	invalid := []byte(`{"title":"T"}`)
 	if err := ValidateManifest(invalid); err == nil {
 		t.Error("ValidateManifest should fail for invalid manifest")
+	}
+}
+
+func TestParseManifest_ReportMustBeLocal(t *testing.T) {
+	build := func(report *string) []byte {
+		m := map[string]any{"title": "T", "author": "A", "version": "1", "description": "D"}
+		if report != nil {
+			m["report"] = *report
+		}
+		b, _ := json.Marshal(m)
+		return b
+	}
+	for _, r := range []string{"../x.html", "/abs.html", "a/../../x.html", `..\x.html`, "..", ".", "a/.."} {
+		r := r
+		if _, err := parseManifest(build(&r)); !errors.Is(err, ErrInvalidManifest) {
+			t.Errorf("report %q: err = %v, want ErrInvalidManifest", r, err)
+		}
+	}
+	for _, r := range []string{"out.html", "sub/out.html"} {
+		r := r
+		if _, err := parseManifest(build(&r)); err != nil {
+			t.Errorf("report %q: unexpected error %v", r, err)
+		}
+	}
+	if _, err := parseManifest(build(nil)); err != nil {
+		t.Errorf("absent report: unexpected error %v", err)
 	}
 }

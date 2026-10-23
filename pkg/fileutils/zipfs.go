@@ -8,6 +8,7 @@ import (
 	"math"
 	"path"
 	"sort"
+	"strings"
 )
 
 var (
@@ -45,6 +46,9 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 	remaining := limit
 	for _, f := range files {
 		name := normalizePath(f.Name)
+		if isEscaping(name) || (!f.FileInfo().IsDir() && name == ".") {
+			return ErrInvalidPath
+		}
 		if f.FileInfo().IsDir() {
 			zfs.cache.Add(name, true)
 			continue
@@ -161,7 +165,7 @@ func (zfs *ZipFs) GetBytes(name string) ([]byte, error) {
 // Add adds or updates a file in the ZIP.
 func (zfs *ZipFs) Add(name string, content []byte, overwrite bool) error {
 	name = normalizePath(name)
-	if name == "" {
+	if name == "" || name == "." || isEscaping(name) {
 		return ErrInvalidPath
 	}
 
@@ -190,6 +194,9 @@ func (zfs *ZipFs) Mkdir(name string) error {
 	name = normalizePath(name)
 	if name == "" {
 		return nil
+	}
+	if isEscaping(name) {
+		return ErrInvalidPath
 	}
 	zfs.cache.Add(name, true)
 	return nil
@@ -340,4 +347,17 @@ func writeFile(filename string, data []byte) error {
 	// This will be implemented using os.WriteFile
 	// For now, we import it inline
 	return writeFileImpl(filename, data)
+}
+
+// isEscaping reports whether a normalized path leaves the root: a ".." segment
+// (split on "/" or "\\", since archive consumers on Windows treat both as separators)
+// or a drive-letter prefix such as "C:".
+func isEscaping(name string) bool {
+	for _, seg := range strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	// Drive-letter prefix ("C:"), ASCII letters only
+	return len(name) >= 2 && name[1] == ':' && (name[0]|0x20) >= 'a' && (name[0]|0x20) <= 'z'
 }

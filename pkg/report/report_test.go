@@ -574,3 +574,27 @@ func TestReportJob_WithReport(t *testing.T) {
 		t.Errorf("options differ: %v vs %v", c.GetOptions(), job.GetOptions())
 	}
 }
+
+func TestBuildFromReportFile_UnreadableIndexFails(t *testing.T) {
+	skipOnWindows(t)
+	if os.Geteuid() == 0 {
+		t.Skip("root can read anything")
+	}
+	dir := createValidReportDir(t)
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := filepath.Join(dir, "index.html")
+	if err := os.Chmod(idx, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(idx, 0644) })
+	zfs, err := BuildFromReportFile(rf)
+	if err == nil || !strings.Contains(err.Error(), "index.html") {
+		t.Fatalf("err = %v, want error mentioning index.html", err)
+	}
+	if zfs != nil {
+		t.Error("zfs should be nil")
+	}
+}

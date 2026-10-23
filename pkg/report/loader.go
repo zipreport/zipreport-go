@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 )
@@ -132,6 +134,9 @@ func parseManifest(data []byte) (*Manifest, error) {
 	if manifest.Description == "" {
 		return nil, fmt.Errorf("%w: description", ErrMissingField)
 	}
+	if manifest.Report != "" && !isLocalPath(manifest.Report) {
+		return nil, fmt.Errorf("%w: report must be a relative path inside the report: %q", ErrInvalidManifest, manifest.Report)
+	}
 	if manifest.Params == nil {
 		manifest.Params = []string{}
 	}
@@ -143,4 +148,9 @@ func parseManifest(data []byte) (*Manifest, error) {
 func ValidateManifest(data []byte) error {
 	_, err := parseManifest(data)
 	return err
+}
+
+// isLocalPath reports whether p is a slash-separated relative path to a file inside the report.
+func isLocalPath(p string) bool {
+	return !strings.Contains(p, `\`) && path.Clean(p) != "." && filepath.IsLocal(filepath.FromSlash(p))
 }

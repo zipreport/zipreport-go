@@ -542,3 +542,24 @@ func TestMIMEProcessor_OverlongASCIISubjectRejected(t *testing.T) {
 		t.Errorf("900 char subject should succeed: %s", result.Error)
 	}
 }
+
+func TestMIMEProcessor_HiddenFileNotEmbedded(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"report.html": `<img src=".env"><img src="image.png">`,
+		".env":        "SECRET",
+		"image.png":   "PNG",
+	}, &report.Manifest{Title: "T"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	parts := mimeParts(t, result.Report)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 parts, got %d", len(parts))
+	}
+	for k, v := range parts {
+		if strings.Contains(string(v), "SECRET") {
+			t.Errorf("part %s contains hidden file content", k)
+		}
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zipreport/zipreport-go/pkg/fileutils"
 	"github.com/zipreport/zipreport-go/pkg/report"
 	"github.com/zipreport/zipreport-go/pkg/template"
 )
@@ -117,7 +118,7 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Handle static assets
 	name := strings.TrimPrefix(r.URL.Path, "/")
-	if name != "" && name != "index.html" {
+	if name != "" && name != "index.html" && !fileutils.IsHiddenPath(name) {
 		// Try to serve as static file
 		content, err := zpt.GetBytes(name)
 		if err == nil {

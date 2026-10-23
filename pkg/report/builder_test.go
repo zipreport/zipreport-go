@@ -466,3 +466,36 @@ func TestBuildZipFs_SymlinkToSocketWithFollowSkipped(t *testing.T) {
 		t.Error("symlink to socket should be skipped")
 	}
 }
+
+func TestBuildZipFs_SymlinkOutsideWithFollowFails(t *testing.T) {
+	skipOnWindows(t)
+	dir := createValidReportDir(t)
+	other := t.TempDir()
+	writeTestFile(t, filepath.Join(other, "x.css"), "body{}")
+	if err := os.Symlink(filepath.Join(other, "x.css"), filepath.Join(dir, "ext.css")); err != nil {
+		t.Fatal(err)
+	}
+	_, result := BuildZipFs(dir, &BuildOptions{FollowSymlinks: true, ExcludeHidden: true})
+	if result.Success() {
+		t.Fatal("expected failure")
+	}
+	if !strings.Contains(result.Error(), "outside the template folder") {
+		t.Errorf("unexpected error: %s", result.Error())
+	}
+}
+
+func TestBuildZipFs_SymlinkInsideWithFollowIncluded(t *testing.T) {
+	skipOnWindows(t)
+	dir := createValidReportDir(t)
+	if err := os.Symlink(filepath.Join("assets", "style.css"), filepath.Join(dir, "alias.css")); err != nil {
+		t.Fatal(err)
+	}
+	zfs, result := BuildZipFs(dir, &BuildOptions{FollowSymlinks: true, ExcludeHidden: true})
+	if !result.Success() {
+		t.Fatalf("expected success: %s", result.Error())
+	}
+	got, err := zfs.GetBytes("alias.css")
+	if err != nil || string(got) != "body { color: red; }" {
+		t.Errorf("alias.css = %q, %v", got, err)
+	}
+}

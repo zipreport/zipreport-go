@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/zipreport/zipreport-go/pkg/fileutils"
 	"github.com/zipreport/zipreport-go/pkg/report"
 )
 
@@ -129,6 +130,9 @@ func (p *MIMEProcessor) buildMIMEMessage(r *report.ReportFile, reportName string
 	baseDir := path.Dir(reportName)
 	for _, ref := range resources {
 		resolved := resolveResource(baseDir, ref)
+		if fileutils.IsHiddenPath(resolved) {
+			continue // never embed hidden files
+		}
 		if cid, ok := cidByPath[resolved]; ok {
 			cidByRef[ref] = cid
 			continue

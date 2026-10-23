@@ -600,3 +600,46 @@ func TestNewZipFsFromBytes_NonPositiveLimitUsesDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestZipFs_Add_RejectsEscapingNames(t *testing.T) {
+	for _, name := range []string{"../x", "..", "a/../../x", `..\x`, `a\..\..\x`, "C:/x", "", "."} {
+		z := NewZipFs()
+		if err := z.Add(name, []byte("x"), true); !errors.Is(err, ErrInvalidPath) {
+			t.Errorf("Add(%q) err = %v, want ErrInvalidPath", name, err)
+		}
+		if len(z.Files()) != 0 {
+			t.Errorf("Add(%q) stored %v", name, z.Files())
+		}
+	}
+	z := NewZipFs()
+	if err := z.Add("1:1.png", []byte("x"), true); err != nil {
+		t.Errorf("Add(1:1.png) err = %v", err)
+	}
+	if err := z.Add("a/../b", []byte("x"), true); err != nil {
+		t.Errorf("Add(a/../b) err = %v", err)
+	}
+	if !z.Exists("b") {
+		t.Error("a/../b should be stored as b")
+	}
+	if err := z.Mkdir("../d"); !errors.Is(err, ErrInvalidPath) {
+		t.Errorf("Mkdir(../d) err = %v, want ErrInvalidPath", err)
+	}
+}
+
+func TestNewZipFsFromBytes_RejectsEscapingEntries(t *testing.T) {
+	for _, evil := range []string{"../evil.txt", `..\evil.txt`, "a/.."} {
+		buf := &bytes.Buffer{}
+		w := zip.NewWriter(buf)
+		for _, n := range []string{"index.html", evil} {
+			f, err := w.Create(n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = f.Write([]byte("x"))
+		}
+		w.Close()
+		if _, err := NewZipFsFromBytes(buf.Bytes()); !errors.Is(err, ErrInvalidPath) {
+			t.Errorf("entry %q: err = %v, want ErrInvalidPath", evil, err)
+		}
+	}
+}

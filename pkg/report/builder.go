@@ -176,6 +176,11 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 				result.errors = append(result.errors, fmt.Sprintf("symlinked directories are not supported: %s (copy the folder, or build without -s to skip it)", filepath.ToSlash(linkRel)))
 				return nil
 			}
+			if resolved != absPath && !strings.HasPrefix(resolved, strings.TrimSuffix(absPath, string(filepath.Separator))+string(filepath.Separator)) {
+				linkRel, _ := filepath.Rel(absPath, path)
+				result.errors = append(result.errors, fmt.Sprintf("symlink points outside the template folder: %s", filepath.ToSlash(linkRel)))
+				return nil
+			}
 			if !info.Mode().IsRegular() {
 				return nil // sockets, devices, FIFOs are never template files
 			}
@@ -245,6 +250,9 @@ func BuildFromReportFile(report *ReportFile) (*fileutils.ZipFs, error) {
 		return nil, err
 	}
 	if err := report.addManifestIfMissing(zfs); err != nil {
+		return nil, err
+	}
+	if err := report.checkRequired(zfs); err != nil {
 		return nil, err
 	}
 	return zfs, nil

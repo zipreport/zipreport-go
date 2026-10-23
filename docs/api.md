@@ -88,6 +88,8 @@ zpt, err := report.LoadBytes(zipData)
 
 Rendering through `api.ZipReport` / `api.MIMEReport` never modifies the loaded `ReportFile`: each render reads through it and writes into a private copy (`ReportFile.Clone()`). One loaded report can therefore be reused and shared across goroutines, provided nothing else modifies it (`Add`, writes to `GetManifest()` fields) at the same time. When driving `template.MiyaRender` and a processor yourself, render into a copy and build the job from it: `c := zpt.Clone(); template.NewMiyaRender(c).Render(data); proc.Process(report.NewReportJob(c))`. `Save()` on a folder-loaded report packages every non-hidden file in the folder; symlinks are followed only when they stay inside it. Filters added through an `EnvironmentWrapper` that write files into a `ReportFile` they captured write into the original, not the copy; use such filters with `MiyaRender` directly.
 
+Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such files are treated as absent. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report.
+
 ### ReportFile
 
 ```go

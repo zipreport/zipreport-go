@@ -1,6 +1,7 @@
 package template
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -312,5 +313,58 @@ func TestMiyaRender_DoesNotMutateCallerData(t *testing.T) {
 	}
 	if _, ok := data["extra"]; ok || len(data) != 1 {
 		t.Errorf("caller's data was modified: %v", data)
+	}
+}
+
+func newDataJSONRender(t *testing.T, dataJSON string) *MiyaRender {
+	t.Helper()
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte("{{ name }} - {{ extra }}"), false)
+	_ = zfs.Add("data.json", []byte(dataJSON), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+	manifest := &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D"}
+	return NewMiyaRender(report.NewReportFile(zfs, manifest))
+}
+
+func TestMiyaRender_InvalidDataJSONFails(t *testing.T) {
+	mr := newDataJSONRender(t, `{"name": `)
+	_, err := mr.Render(nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid data.json") {
+		t.Fatalf("expected invalid data.json error, got %v", err)
+	}
+}
+
+func TestMiyaRender_EmptyDataJSONAllowed(t *testing.T) {
+	for _, content := range []string{"", "  \n", "null"} {
+		mr := newDataJSONRender(t, content)
+		output, err := mr.Render(map[string]interface{}{"name": "n", "extra": "e"})
+		if err != nil {
+			t.Fatalf("data.json %q: Render failed: %v", content, err)
+		}
+		if !strings.Contains(output, "n - e") {
+			t.Errorf("data.json %q: unexpected output %q", content, output)
+		}
+	}
+}
+
+func TestMiyaRender_DataJSONWithBOM(t *testing.T) {
+	mr := newDataJSONRender(t, "\xef\xbb\xbf{\"name\":\"bom\",\"extra\":\"x\"}")
+	output, err := mr.Render(nil)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if !strings.Contains(output, "bom") {
+		t.Errorf("output should contain BOM data: %q", output)
+	}
+}
+
+func TestMiyaRender_FilterErrorSurfaced(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender())
+	mr.filterError = errors.New("boom")
+	if _, err := mr.Render(map[string]interface{}{"name": "x"}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("Render err = %v, want boom", err)
+	}
+	if _, err := mr.RenderString("{{ 1 }}", nil); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("RenderString err = %v, want boom", err)
 	}
 }

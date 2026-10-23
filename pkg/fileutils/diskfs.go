@@ -51,8 +51,9 @@ func (dfs *DiskFs) buildPath(name string) (string, error) {
 		return "", err
 	}
 
-	// Check that the path starts with the base path
-	if !strings.HasPrefix(absPath, dfs.basePath) {
+	// Reject anything that resolves outside the base directory
+	base := strings.TrimSuffix(dfs.basePath, string(filepath.Separator))
+	if absPath != dfs.basePath && !strings.HasPrefix(absPath, base+string(filepath.Separator)) {
 		return "", ErrInvalidPath
 	}
 

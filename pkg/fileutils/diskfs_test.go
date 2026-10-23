@@ -349,3 +349,73 @@ func TestDiskFs_Snapshot_CopiesNestedAndSkipsHiddenAndGen(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskFs_SiblingPrefixEscape(t *testing.T) {
+	parent := t.TempDir()
+	base := filepath.Join(parent, "tpl")
+	secretDir := filepath.Join(parent, "tpl-secret")
+	if err := os.MkdirAll(base, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secretDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secretDir, "s.txt"), []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dfs, err := NewDiskFs(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := dfs.GetBytes("../tpl-secret/s.txt"); err != ErrInvalidPath {
+		t.Errorf("GetBytes err = %v, want ErrInvalidPath", err)
+	}
+	if dfs.Exists("../tpl-secret/s.txt") {
+		t.Error("Exists returned true for sibling-folder file")
+	}
+	if err := dfs.Add("../tpl-secret/new.txt", []byte("x"), true); err != ErrInvalidPath {
+		t.Errorf("Add err = %v, want ErrInvalidPath", err)
+	}
+	if _, err := os.Stat(filepath.Join(secretDir, "new.txt")); !os.IsNotExist(err) {
+		t.Errorf("new.txt written outside base (err=%v)", err)
+	}
+}
+
+func TestDiskFs_DotDotPrefixedNameInsideBase(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "..notes"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dfs, _ := NewDiskFs(dir)
+
+	got, err := dfs.GetBytes("..notes")
+	if err != nil {
+		t.Fatalf("GetBytes failed: %v", err)
+	}
+	if string(got) != "ok" {
+		t.Errorf("content = %q, want ok", got)
+	}
+}
+
+func TestDiskFs_SubdirAndRootStillResolve(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a", "b.txt"), []byte("bee"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dfs, _ := NewDiskFs(dir)
+
+	if !dfs.Exists("") {
+		t.Error("Exists(\"\") = false, want true")
+	}
+	got, err := dfs.GetBytes("a/../a/b.txt")
+	if err != nil {
+		t.Fatalf("GetBytes failed: %v", err)
+	}
+	if string(got) != "bee" {
+		t.Errorf("content = %q, want bee", got)
+	}
+}

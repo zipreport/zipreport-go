@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mime"
 	"net/mail"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -60,16 +61,17 @@ func (p *MIMEProcessor) Process(job *report.ReportJob) *report.JobResult {
 	r := job.GetReport()
 
 	// Get rendered HTML
-	htmlContent, err := r.GetBytes(report.FileReport)
+	reportName := r.ReportFilename()
+	htmlContent, err := r.GetBytes(reportName)
 	if err != nil {
-		return report.NewJobResultError("failed to get report.html: " + err.Error())
+		return report.NewJobResultError("failed to get " + reportName + ": " + err.Error())
 	}
 
 	// Extract local resources from HTML
 	resources := extractResources(string(htmlContent))
 
 	// Build MIME message
-	mimeData, err := p.buildMIMEMessage(r, htmlContent, resources)
+	mimeData, err := p.buildMIMEMessage(r, reportName, htmlContent, resources)
 	if err != nil {
 		return report.NewJobResultError("failed to build MIME message: " + err.Error())
 	}
@@ -78,76 +80,170 @@ func (p *MIMEProcessor) Process(job *report.ReportJob) *report.JobResult {
 }
 
 // buildMIMEMessage creates the MIME message with embedded resources.
-func (p *MIMEProcessor) buildMIMEMessage(r *report.ReportFile, htmlContent []byte, resources []string) ([]byte, error) {
+func (p *MIMEProcessor) buildMIMEMessage(r *report.ReportFile, reportName string, htmlContent []byte, resources []string) ([]byte, error) {
+	subject := strings.TrimSpace(p.subject)
+	if subject == "" {
+		// The manifest title is not caller input: collapse any line breaks instead of failing
+		subject = strings.Join(strings.FieldsFunc(r.Title(), isHeaderSpace), " ")
+	}
+	from := strings.TrimSpace(p.from)
+	to := make([]string, 0, len(p.to))
+	for _, addr := range p.to {
+		to = append(to, strings.TrimSpace(addr))
+	}
+	for _, v := range append([]string{subject, from}, to...) {
+		if hasControlChars(v) {
+			return nil, fmt.Errorf("header value contains a line break or control character: %q", v)
+		}
+	}
+	encodedSubject := mime.QEncoding.Encode("utf-8", subject)
+	if encodedSubject == subject && len("Subject: ")+len(subject) > maxHeaderLineLength {
+		// ASCII subjects are not encoded, so they cannot be folded at encoded-word boundaries
+		return nil, fmt.Errorf("subject too long: %d characters", len(subject))
+	}
+
 	var buf bytes.Buffer
 	boundary := generateBoundary()
 
 	// Write headers
-	if p.from != "" {
-		buf.WriteString(fmt.Sprintf("From: %s\r\n", p.from))
+	if from != "" {
+		fmt.Fprintf(&buf, "From: %s\r\n", from)
 	}
-	if len(p.to) > 0 {
-		buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(p.to, ", ")))
+	if len(to) > 0 {
+		fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(to, ",\r\n "))
 	}
-	if p.subject != "" {
-		buf.WriteString(fmt.Sprintf("Subject: %s\r\n", p.subject))
-	} else {
-		buf.WriteString(fmt.Sprintf("Subject: %s\r\n", r.Title()))
-	}
+	fmt.Fprintf(&buf, "Subject: %s\r\n", foldEncodedWords(encodedSubject))
 	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString(fmt.Sprintf("Content-Type: multipart/related; boundary=\"%s\"\r\n", boundary))
+	fmt.Fprintf(&buf, "Content-Type: multipart/related; boundary=\"%s\"\r\n", boundary)
 	buf.WriteString("\r\n")
 
+	// Embed each referenced file once; leave references that are not files untouched
+	type embedded struct {
+		name    string
+		cid     string
+		content []byte
+	}
+	var parts []embedded
+	cidByPath := make(map[string]string)
+	cidByRef := make(map[string]string)
+	baseDir := path.Dir(reportName)
+	for _, ref := range resources {
+		resolved := resolveResource(baseDir, ref)
+		if cid, ok := cidByPath[resolved]; ok {
+			cidByRef[ref] = cid
+			continue
+		}
+		content, err := r.GetBytes(resolved)
+		if err != nil {
+			continue
+		}
+		cid := fmt.Sprintf("resource%d@zipreport", len(parts))
+		cidByPath[resolved] = cid
+		cidByRef[ref] = cid
+		parts = append(parts, embedded{name: resolved, cid: cid, content: content})
+	}
+
+	// Replace embedded references with cid: references, only inside src and <link href> values
+	modifiedHTML := rewriteRefs(string(htmlContent), srcRegex, cidByRef)
+	modifiedHTML = rewriteRefs(modifiedHTML, linkHrefRegex, cidByRef)
+
 	// Write HTML part
-	buf.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	fmt.Fprintf(&buf, "--%s\r\n", boundary)
 	buf.WriteString("Content-Type: text/html; charset=utf-8\r\n")
 	buf.WriteString("Content-Transfer-Encoding: base64\r\n")
 	buf.WriteString("\r\n")
-
-	// Replace local resource references with cid: references
-	modifiedHTML := string(htmlContent)
-	cidMap := make(map[string]string)
-	for i, resource := range resources {
-		cid := fmt.Sprintf("resource%d@zipreport", i)
-		cidMap[resource] = cid
-		modifiedHTML = strings.ReplaceAll(modifiedHTML, fmt.Sprintf(`"%s"`, resource), fmt.Sprintf(`"cid:%s"`, cid))
-		modifiedHTML = strings.ReplaceAll(modifiedHTML, fmt.Sprintf(`'%s'`, resource), fmt.Sprintf(`'cid:%s'`, cid))
-	}
-
-	buf.WriteString(base64.StdEncoding.EncodeToString([]byte(modifiedHTML)))
-	buf.WriteString("\r\n")
+	writeBase64Lines(&buf, []byte(modifiedHTML))
 
 	// Write resource parts
-	for _, resource := range resources {
-		content, err := r.GetBytes(resource)
-		if err != nil {
-			continue // Skip missing resources
-		}
-
-		cid := cidMap[resource]
-		mimeType := getMIMEType(resource)
-
-		buf.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-		buf.WriteString(fmt.Sprintf("Content-Type: %s\r\n", mimeType))
+	for _, part := range parts {
+		fmt.Fprintf(&buf, "--%s\r\n", boundary)
+		fmt.Fprintf(&buf, "Content-Type: %s\r\n", getMIMEType(part.name))
 		buf.WriteString("Content-Transfer-Encoding: base64\r\n")
-		buf.WriteString(fmt.Sprintf("Content-ID: <%s>\r\n", cid))
-		buf.WriteString(fmt.Sprintf("Content-Disposition: inline; filename=\"%s\"\r\n", filepath.Base(resource)))
+		fmt.Fprintf(&buf, "Content-ID: <%s>\r\n", part.cid)
+		fmt.Fprintf(&buf, "Content-Disposition: %s\r\n", mime.FormatMediaType("inline", map[string]string{"filename": filepath.Base(part.name)}))
 		buf.WriteString("\r\n")
-		buf.WriteString(base64.StdEncoding.EncodeToString(content))
-		buf.WriteString("\r\n")
+		writeBase64Lines(&buf, part.content)
 	}
 
 	// Write closing boundary
-	buf.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	fmt.Fprintf(&buf, "--%s--\r\n", boundary)
 
 	return buf.Bytes(), nil
 }
 
+// resolveResource resolves a reference from the HTML file in baseDir to a path in the report.
+// A leading "/" refers to the report root.
+func resolveResource(baseDir, ref string) string {
+	if strings.HasPrefix(ref, "/") {
+		return path.Clean(strings.TrimPrefix(ref, "/"))
+	}
+	return path.Join(baseDir, ref)
+}
+
+// rewriteRefs replaces the captured reference in each match of re with its cid: form.
+// References without an embedded part are left unchanged.
+func rewriteRefs(html string, re *regexp.Regexp, cidByRef map[string]string) string {
+	return re.ReplaceAllStringFunc(html, func(m string) string {
+		loc := re.FindStringSubmatchIndex(m)
+		cid, ok := cidByRef[m[loc[2]:loc[3]]]
+		if !ok {
+			return m
+		}
+		return m[:loc[2]] + "cid:" + cid + m[loc[3]:]
+	})
+}
+
+// maxHeaderLineLength is the maximum header line length allowed by RFC 5322.
+const maxHeaderLineLength = 998
+
+// isHeaderSpace reports whether c is a space, tab or line break.
+func isHeaderSpace(c rune) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+// hasControlChars reports whether s contains ASCII control characters other than tab (including CR and LF).
+func hasControlChars(s string) bool {
+	for _, c := range s {
+		if (c < 0x20 && c != '\t') || c == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// foldEncodedWords puts each RFC 2047 encoded word on its own folded header line.
+func foldEncodedWords(s string) string {
+	return strings.ReplaceAll(s, "?= =?", "?=\r\n =?")
+}
+
+// base64LineLength is the maximum encoded line length allowed by RFC 2045.
+const base64LineLength = 76
+
+// writeBase64Lines writes data base64-encoded in CRLF-terminated lines of at most 76 characters.
+func writeBase64Lines(buf *bytes.Buffer, data []byte) {
+	encoded := base64.StdEncoding.EncodeToString(data)
+	for len(encoded) > base64LineLength {
+		buf.WriteString(encoded[:base64LineLength])
+		buf.WriteString("\r\n")
+		encoded = encoded[base64LineLength:]
+	}
+	buf.WriteString(encoded)
+	buf.WriteString("\r\n")
+}
+
+// srcRegex matches src attributes (images, scripts, media).
+var srcRegex = regexp.MustCompile(`\bsrc=["']([^"']+)["']`)
+
+// linkHrefRegex matches href attributes of <link> elements (stylesheets, icons). Anchor hrefs are links, not resources.
+var linkHrefRegex = regexp.MustCompile(`<link\b[^>]*\bhref=["']([^"']+)["']`)
+
+// schemeRegex matches references that start with a URL scheme (http:, mailto:, data:, cid:, ...).
+var schemeRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+
 // extractResources finds local resource references in HTML.
 func extractResources(html string) []string {
-	// Match src and href attributes
-	srcRegex := regexp.MustCompile(`(?:src|href)=["']([^"']+)["']`)
 	matches := srcRegex.FindAllStringSubmatch(html, -1)
+	matches = append(matches, linkHrefRegex.FindAllStringSubmatch(html, -1)...)
 
 	seen := make(map[string]bool)
 	var resources []string
@@ -158,23 +254,18 @@ func extractResources(html string) []string {
 		}
 		resource := match[1]
 
-		// Skip external URLs
-		if isExternalURL(resource) {
-			continue
-		}
-
-		// Skip data URIs
-		if strings.HasPrefix(resource, "data:") {
-			continue
-		}
-
-		// Skip cid references
-		if strings.HasPrefix(resource, "cid:") {
+		// Skip external URLs and anything with a scheme (mailto:, tel:, data:, cid:, ...)
+		if isExternalURL(resource) || schemeRegex.MatchString(resource) {
 			continue
 		}
 
 		// Skip anchors
 		if strings.HasPrefix(resource, "#") {
+			continue
+		}
+
+		// Never embed HTML pages (e.g. <link rel="canonical" href="report.html">)
+		if ext := strings.ToLower(path.Ext(resource)); ext == ".html" || ext == ".htm" {
 			continue
 		}
 

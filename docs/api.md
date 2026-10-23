@@ -269,6 +269,8 @@ proc := processor.NewMIMEProcessor(
 )
 ```
 
+Subject, From and To are trimmed and must not contain line breaks or other control characters (tabs are allowed; the render fails otherwise); a manifest title used as the default subject has line breaks collapsed. Non-ASCII subjects are encoded automatically; an ASCII subject longer than 989 characters is rejected. Only `src` references and `<link href>` targets that resolve to files in the report are embedded, never `.html`/`.htm` pages; anchor links are left unchanged.
+
 ## pkg/fileutils
 
 File system abstractions.

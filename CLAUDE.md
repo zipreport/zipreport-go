@@ -52,7 +52,8 @@ ZIPREPORT_URL="http://localhost:6543" go run main.go output.pdf
 ### File Systems
 - `ZipFs` - In-memory ZIP file system for .zpt files
 - `DiskFs` - Disk-based file system for template directories
-- Both implement a common interface for file operations
+- `OverlayFs` - In-memory writes over a read-only base; `ReportFile.Clone()` uses it so renders never modify the loaded report
+- All implement `FsInterface`
 
 ### Processors
 - `ServerBackend` - Renders PDFs via zipreport-server HTTP API

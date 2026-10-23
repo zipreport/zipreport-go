@@ -21,6 +21,8 @@ zipreport build <source_dir> <output.zpt>
 
 - `-s, --symlinks` - Follow symlinks when building (symlinks must resolve inside the template folder; symlinked folders are not supported)
 
+Builds fail when any file cannot be read, when a symlink is broken (with `-s`), when a symlinked folder is used (with `-s`), or when `index.html`/`manifest.json` is a symlink (without `-s`). Otherwise, without `-s`, symlinks are skipped.
+
 **Examples:**
 
 ```bash
@@ -76,7 +78,7 @@ The debug server:
 - Uses data from `data.json` if present
 - Shows render errors in the browser
 - Has no authentication: only bind to other interfaces on trusted networks
-- When bound to localhost, only answers requests addressed to localhost or a loopback IP; `--host 0.0.0.0` also disables this check (needed behind port forwarders such as Codespaces)
+- When bound to localhost, only answers requests addressed to localhost or a loopback IP; binding to any non-loopback address (e.g. `--host 0.0.0.0`) disables this check (needed behind port forwarders such as Codespaces)
 
 ### info
 
@@ -187,7 +189,7 @@ Optional file containing default data for debugging:
 }
 ```
 
-If present, it must contain a JSON object (an empty file is treated as no data); a malformed data.json makes every render fail with "invalid data.json".
+If present, it must contain a JSON object (an empty file or `null` is treated as no data; a UTF-8 byte-order mark is allowed); a malformed data.json makes every render fail with "invalid data.json".
 
 ## Examples
 

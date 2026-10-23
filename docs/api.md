@@ -86,7 +86,27 @@ zpt, err := report.LoadDir("./template")
 zpt, err := report.LoadBytes(zipData)
 ```
 
-Rendering through `api.ZipReport` / `api.MIMEReport` never modifies the loaded `ReportFile`: each render reads through it and writes into a private copy (`ReportFile.Clone()`). One loaded report can therefore be reused and shared across goroutines, provided nothing else modifies it (`Add`, writes to `GetManifest()` fields) at the same time. When driving `template.MiyaRender` and a processor yourself, render into a copy and build the job from it: `c := zpt.Clone(); template.NewMiyaRender(c).Render(data); proc.Process(report.NewReportJob(c))`. `Save()` on a folder-loaded report packages every non-hidden file in the folder; symlinks are followed only when they stay inside it. Filters added through an `EnvironmentWrapper` that write files into a `ReportFile` they captured write into the original, not the copy; use such filters with `MiyaRender` directly.
+### Rendering and concurrency
+
+Rendering through `api.ZipReport` / `api.MIMEReport` never modifies the loaded `ReportFile`: each render reads through it and writes into a private copy (`ReportFile.Clone()`, an in-memory `fileutils.OverlayFs`). One loaded report can be reused and shared across goroutines, provided nothing modifies it (`Add`, writes to `GetManifest()` fields) at the same time.
+
+When driving `template.MiyaRender` and a processor yourself, render into a copy and build the job from it:
+
+```go
+c := zpt.Clone()
+if _, err := template.NewMiyaRender(c).Render(data); err != nil {
+    return err
+}
+result := proc.Process(report.NewReportJob(c))
+```
+
+Filters added through an `EnvironmentWrapper` that write files into a `ReportFile` they captured write into the original, not the copy; use such filters with `MiyaRender` directly.
+
+`Save()` and every render ship the report's own `manifest.json`, so changes made through `GetManifest()` are not sent; the in-memory manifest is only used when the report has no `manifest.json`.
+
+`Save()` on a folder-loaded report packages every readable, non-hidden file in the folder. It skips root-level `_gen_*` files left by older versions, and it fails if `index.html` is missing or the folder is nested deeper than 32 levels. Large folders are read and sent on every render.
+
+A `data.json` in the report supplies default data. It must contain a JSON object (empty files and `null` are treated as no data; a UTF-8 byte-order mark is allowed); anything else makes every render fail with `invalid data.json`.
 
 Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such files are treated as absent. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report.
 
@@ -217,6 +237,8 @@ output, err := renderer.RenderString("Hello {{ name }}", data)
 env := renderer.GetEnvironment()
 ```
 
+`Render` writes the output (and any generated images) into the `ReportFile` it was given; pass `zpt.Clone()` to keep `zpt` unchanged.
+
 ### EnvironmentWrapper
 
 Customize the miya environment:
@@ -267,6 +289,8 @@ backend := processor.NewServerBackend(url, apiKey,
 client := api.NewZipReportWithBackend(backend)
 ```
 
+Responses larger than 512 MiB fail with `processor.ErrResponseTooLarge`; raise the limit with `processor.WithMaxResponseSize(n)` (`n <= 0` means the default). `api.RenderPDF` takes no options and always uses the default. `ErrResponseTooLarge` can be matched with `errors.Is` only when calling `ServerBackend.Render` directly; `ZipReport` reports it as text in `JobResult.Error`.
+
 ### MIMEProcessor
 
 ```go
@@ -311,6 +335,8 @@ zfs.Remove("file.txt")
 data, err := zfs.Save()
 ```
 
+Loading a `.zpt` fails with `fileutils.ErrZipTooLarge` when its total uncompressed size exceeds `fileutils.MaxUncompressedSize` (default 512 MiB). The limit is process-wide: set it once at start-up, before any load. Loads running at the same time can each use up to the limit. `zfs.Clone()` returns an independent copy.
+
 ### DiskFs
 
 Disk-based file system:
@@ -323,6 +349,18 @@ content, err := dfs.GetBytes("file.txt")
 exists := dfs.Exists("file.txt")
 basePath := dfs.BasePath()
 ```
+
+### OverlayFs
+
+Layers an in-memory `ZipFs` over another file system: reads fall through to the base, writes stay in memory. `ReportFile.Clone()` uses it.
+
+```go
+o := fileutils.NewOverlayFs(base)
+o.Add("report.html", html, true)    // base is untouched
+content, err := o.GetBytes("index.html") // read from base
+```
+
+`DiskFs.Snapshot()` copies a folder into a new `ZipFs` (hidden entries, special files and symlinks leaving the folder are skipped).
 
 ## Complete Example
 

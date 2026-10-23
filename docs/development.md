@@ -5,7 +5,7 @@ This guide covers setting up a development environment, running tests, and contr
 ## Prerequisites
 
 - Go 1.24+
-- golangci-lint (for linting)
+- golangci-lint v2 (CI pins v2.12.2; the v2 config in `.golangci.yml` is rejected by v1)
 - zipreport-server (for testing PDF generation)
 
 ## Getting Started
@@ -46,6 +46,8 @@ make test
 # or
 go test ./...
 ```
+
+`go test -short ./...` skips the CLI end-to-end test, which builds the binary and needs `go` on `PATH`.
 
 ### With Coverage
 

@@ -62,11 +62,11 @@ Core types for report definition and configuration.
 
 #### ReportFile
 
-Represents a loaded report template. Wraps a filesystem (ZipFs or DiskFs) with a parsed manifest.
+Represents a loaded report template. Wraps a filesystem (ZipFs, DiskFs or OverlayFs) with a parsed manifest.
 
 ```go
 type ReportFile struct {
-    fs       FsInterface  // ZipFs or DiskFs
+    fs       FsInterface  // ZipFs, DiskFs or OverlayFs
     manifest *Manifest    // Parsed manifest.json
 }
 ```
@@ -281,13 +281,14 @@ Used internally by ZipFs for fast file/directory existence checks.
    Creates ReportJob with settings
 
 3. Render Template
-   template.NewMiyaRender(zpt)
+   work := zpt.Clone()
+   template.NewMiyaRender(work)
    renderer.Render(data)
        ↓
-   Executes template, writes report.html
+   Executes template, writes report.html into the in-memory copy
 
 4. Process
-   processor.ZipReportProcessor.Process(job)
+   processor.ZipReportProcessor.Process(job.WithReport(work))
        ↓
    Exports to ZIP, sends to server
 
@@ -317,7 +318,7 @@ Used internally by ZipFs for fast file/directory existence checks.
 
 ### File System Abstraction
 
-Both ZipFs and DiskFs implement the same interface, allowing:
+ZipFs, DiskFs and OverlayFs (in-memory writes over a read-only base; used for renders) implement the same interface, allowing:
 
 - Transparent handling of .zpt files and directories
 - Easy development with directories, deployment with .zpt

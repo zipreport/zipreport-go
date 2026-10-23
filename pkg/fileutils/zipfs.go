@@ -17,11 +17,13 @@ var (
 	ErrNotADirectory = errors.New("not a directory")
 	ErrNotAFile      = errors.New("not a file")
 	ErrInvalidPath   = errors.New("invalid path")
-	ErrZipTooLarge   = errors.New("zip content exceeds size limit")
+	// ErrZipTooLarge is returned when a ZIP exceeds MaxUncompressedSize.
+	ErrZipTooLarge = errors.New("zip content exceeds size limit")
 )
 
 // MaxUncompressedSize is the maximum total uncompressed size accepted when loading a ZIP.
-// Values <= 0 mean the default (512 MiB).
+// Values <= 0 mean the default (512 MiB). It is process-wide: set it once before any
+// load, and never while loads may be running. Concurrent loads can each use up to the limit.
 var MaxUncompressedSize int64 = defaultMaxUncompressedSize
 
 const defaultMaxUncompressedSize int64 = 512 << 20

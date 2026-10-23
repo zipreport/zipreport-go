@@ -37,8 +37,8 @@ make lint           # Run linter
 make build          # Build CLI
 
 # Manual commands
-go test ./pkg/...
-go test ./pkg/... -coverprofile=coverage.out
+go test ./...
+go test ./... -coverprofile=coverage.out
 golangci-lint run
 go build ./cmd/zipreport
 

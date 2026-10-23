@@ -258,10 +258,10 @@ make clean          # Remove build artifacts
 
 ```bash
 # Run tests
-go test ./pkg/...
+go test ./...
 
 # Run with coverage
-go test ./pkg/... -coverprofile=coverage.out
+go test ./... -coverprofile=coverage.out
 go tool cover -func=coverage.out
 
 # Build CLI

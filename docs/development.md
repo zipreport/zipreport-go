@@ -44,7 +44,7 @@ make test
 ```bash
 make test
 # or
-go test ./pkg/...
+go test ./...
 ```
 
 ### With Coverage
@@ -52,7 +52,7 @@ go test ./pkg/...
 ```bash
 make test-coverage
 # or
-go test -coverprofile=coverage.out ./pkg/...
+go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 ```
 
@@ -75,7 +75,7 @@ go test ./pkg/template/...
 ```bash
 make test-verbose
 # or
-go test -v ./pkg/...
+go test -v ./...
 ```
 
 ## Linting

@@ -53,6 +53,7 @@ zipreport debug <source>
 **Flags:**
 
 - `-p, --port` - Port to listen on (default: 8000)
+- `--host` - Interface to listen on (default: 127.0.0.1; use 0.0.0.0 to accept connections from other machines or from outside a container)
 
 **Examples:**
 
@@ -73,6 +74,8 @@ The debug server:
 - Serves static assets (CSS, JS, images)
 - Uses data from `data.json` if present
 - Shows render errors in the browser
+- Has no authentication: only bind to other interfaces on trusted networks
+- When bound to localhost, only answers requests addressed to localhost or a loopback IP; `--host 0.0.0.0` also disables this check (needed behind port forwarders such as Codespaces)
 
 ### info
 

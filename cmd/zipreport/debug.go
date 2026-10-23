@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zipreport/zipreport-go/pkg/report"
@@ -31,8 +35,10 @@ Example:
 }
 
 var debugPort int
+var debugHost string
 
 func init() {
+	debugCmd.Flags().StringVar(&debugHost, "host", "127.0.0.1", "Interface to listen on (use 0.0.0.0 for all interfaces)")
 	debugCmd.Flags().IntVarP(&debugPort, "port", "p", 8000, "Port to listen on")
 }
 
@@ -44,16 +50,58 @@ func runDebug(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("source not found: %w", err)
 	}
 
-	// Create handler
-	handler := &debugHandler{source: source}
-
 	// Start server
-	addr := fmt.Sprintf(":%d", debugPort)
-	fmt.Printf("Starting debug server at http://localhost%s\n", addr)
+	srv := newDebugServer(debugHost, debugPort, source)
+	displayHost := debugHost
+	if displayHost == "" || displayHost == "0.0.0.0" || displayHost == "::" {
+		displayHost = "localhost"
+	}
+	fmt.Printf("Starting debug server at http://%s\n", net.JoinHostPort(displayHost, strconv.Itoa(debugPort)))
 	fmt.Printf("Serving template from: %s\n", source)
 	fmt.Println("Press Ctrl+C to stop")
 
-	return http.ListenAndServe(addr, handler)
+	return srv.ListenAndServe()
+}
+
+// newDebugServer creates the debug HTTP server for a template source.
+// When bound to a loopback address it only answers requests addressed to
+// localhost, which blocks DNS-rebinding access from web pages.
+func newDebugServer(host string, port int, source string) *http.Server {
+	host = strings.Trim(host, "[]") // accept --host [::1]
+	var handler http.Handler = &debugHandler{source: source}
+	if isLoopbackHost(host) {
+		handler = localHostOnly(handler)
+	}
+	return &http.Server{
+		Addr:              net.JoinHostPort(host, strconv.Itoa(port)),
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// localHostOnly rejects requests whose Host header is not a loopback name.
+func localHostOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		// An empty Host (HTTP/1.0 clients) cannot come from a rebinding web page
+		if host != "" && !isLoopbackHost(strings.Trim(host, "[]")) {
+			http.Error(w, "Forbidden host (start with --host 0.0.0.0 to allow other hostnames)", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type debugHandler struct {
@@ -69,13 +117,13 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle static assets
-	path := r.URL.Path
-	if path != "/" && path != "/index.html" {
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if name != "" && name != "index.html" {
 		// Try to serve as static file
-		content, err := zpt.GetBytes(path[1:]) // Remove leading /
+		content, err := zpt.GetBytes(name)
 		if err == nil {
 			// Determine content type
-			ext := filepath.Ext(path)
+			ext := filepath.Ext(name)
 			contentType := getContentType(ext)
 			w.Header().Set("Content-Type", contentType)
 			_, _ = w.Write(content)

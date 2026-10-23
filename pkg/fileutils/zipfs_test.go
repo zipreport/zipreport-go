@@ -3,7 +3,9 @@ package fileutils
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -504,5 +506,97 @@ func TestZipFs_SaveDeterministic(t *testing.T) {
 	want := []string{"a/", "m/", "m/n/", "a/b.txt", "c.txt", "m/n/o.txt", "z.txt"}
 	if !slices.Equal(got, want) {
 		t.Errorf("entry order = %v, want %v", got, want)
+	}
+}
+
+func zipWith(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	w := zip.NewWriter(buf)
+	for name, content := range files {
+		f, err := w.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func setMaxUncompressed(t *testing.T, n int64) {
+	t.Helper()
+	old := MaxUncompressedSize
+	MaxUncompressedSize = n
+	t.Cleanup(func() { MaxUncompressedSize = old })
+}
+
+func TestNewZipFsFromBytes_TooLarge(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWith(t, map[string][]byte{
+		"a.txt": bytes.Repeat([]byte("a"), 600),
+		"b.txt": bytes.Repeat([]byte("b"), 600),
+	})
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+func TestNewZipFsFromBytes_AtLimit(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	content := bytes.Repeat([]byte("a"), 1024)
+	zfs, err := NewZipFsFromBytes(zipWith(t, map[string][]byte{"a.txt": content}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, err := zfs.GetBytes("a.txt")
+	if err != nil || !bytes.Equal(got, content) {
+		t.Errorf("content mismatch: len=%d err=%v", len(got), err)
+	}
+}
+
+func TestNewZipFsFromFile_TooLarge(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWith(t, map[string][]byte{
+		"a.txt": bytes.Repeat([]byte("a"), 600),
+		"b.txt": bytes.Repeat([]byte("b"), 600),
+	})
+	fn := filepath.Join(t.TempDir(), "big.zip")
+	if err := os.WriteFile(fn, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewZipFsFromFile(fn); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+func TestNewZipFsFromBytes_MaxInt64Limit(t *testing.T) {
+	setMaxUncompressed(t, math.MaxInt64)
+	zfs, err := NewZipFsFromBytes(zipWith(t, map[string][]byte{"a.txt": bytes.Repeat([]byte("a"), 100)}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := zfs.GetBytes("a.txt")
+	if len(got) != 100 {
+		t.Errorf("expected 100 bytes, got %d", len(got))
+	}
+}
+
+func TestNewZipFsFromBytes_NonPositiveLimitUsesDefault(t *testing.T) {
+	data := zipWith(t, map[string][]byte{"a.txt": bytes.Repeat([]byte("a"), 100)})
+	for _, n := range []int64{0, -1} {
+		setMaxUncompressed(t, n)
+		zfs, err := NewZipFsFromBytes(data)
+		if err != nil {
+			t.Fatalf("limit %d: unexpected error: %v", n, err)
+		}
+		got, _ := zfs.GetBytes("a.txt")
+		if len(got) != 100 {
+			t.Errorf("limit %d: expected 100 bytes, got %d", n, len(got))
+		}
 	}
 }

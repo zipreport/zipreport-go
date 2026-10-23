@@ -3,15 +3,27 @@ package processor
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // defaultTimeout is the HTTP client timeout used when WithTimeout is not given.
 const defaultTimeout = 5 * time.Minute
+
+// defaultMaxResponseSize is the response size limit used when WithMaxResponseSize is not given or <= 0.
+const defaultMaxResponseSize int64 = 512 << 20
+
+// maxErrorBodySize bounds how much of an error response is included in the returned error.
+const maxErrorBodySize = 1024
+
+// ErrResponseTooLarge is returned when the server response exceeds the configured limit.
+var ErrResponseTooLarge = errors.New("response exceeds size limit")
 
 // ServerBackend renders PDFs via zipreport-server HTTP API.
 type ServerBackend struct {
@@ -22,6 +34,8 @@ type ServerBackend struct {
 	secureSSL  bool
 	timeout    time.Duration
 	timeoutSet bool
+
+	maxResponseSize int64
 }
 
 // ServerOption configures a ServerBackend.
@@ -58,6 +72,13 @@ func WithTimeout(timeout time.Duration) ServerOption {
 	}
 }
 
+// WithMaxResponseSize sets the maximum accepted response size in bytes (<= 0 means the default, 512 MiB).
+func WithMaxResponseSize(n int64) ServerOption {
+	return func(b *ServerBackend) {
+		b.maxResponseSize = n
+	}
+}
+
 // NewServerBackend creates a new ServerBackend.
 func NewServerBackend(url, apiKey string, opts ...ServerOption) *ServerBackend {
 	b := &ServerBackend{
@@ -66,10 +87,16 @@ func NewServerBackend(url, apiKey string, opts ...ServerOption) *ServerBackend {
 		apiVersion: 2,
 		secureSSL:  false, // matching Python behavior
 		timeout:    defaultTimeout,
+
+		maxResponseSize: defaultMaxResponseSize,
 	}
 
 	for _, opt := range opts {
 		opt(b)
+	}
+
+	if b.maxResponseSize <= 0 {
+		b.maxResponseSize = defaultMaxResponseSize
 	}
 
 	if b.httpClient != nil {
@@ -144,20 +171,29 @@ func (b *ServerBackend) Render(zptData []byte, options map[string]interface{}) (
 	}
 	defer resp.Body.Close()
 
-	// Read response
-	responseData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Check status
+	// Check status, reading at most a bounded error body
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server error (status %d): %s", resp.StatusCode, string(responseData))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize+1))
+		suffix := ""
+		if len(body) > maxErrorBodySize {
+			body = body[:maxErrorBodySize]
+			suffix = "... (truncated)"
+		}
+		return nil, fmt.Errorf("server error (status %d): %s%s", resp.StatusCode, strings.ToValidUTF8(string(body), ""), suffix)
 	}
 
 	// Check content type
 	if resp.Header.Get("Content-Type") != "application/pdf" {
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
+	}
+
+	// Read response
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, saturatingInc(b.maxResponseSize)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if int64(len(responseData)) > b.maxResponseSize {
+		return nil, fmt.Errorf("%w (limit %d bytes)", ErrResponseTooLarge, b.maxResponseSize)
 	}
 
 	return responseData, nil
@@ -171,4 +207,12 @@ func (b *ServerBackend) URL() string {
 // APIVersion returns the API version.
 func (b *ServerBackend) APIVersion() int {
 	return b.apiVersion
+}
+
+// saturatingInc returns n+1, or n when n+1 would overflow.
+func saturatingInc(n int64) int64 {
+	if n == math.MaxInt64 {
+		return n
+	}
+	return n + 1
 }

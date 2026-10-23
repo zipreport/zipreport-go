@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"path"
 	"sort"
 )
@@ -15,7 +16,67 @@ var (
 	ErrNotADirectory = errors.New("not a directory")
 	ErrNotAFile      = errors.New("not a file")
 	ErrInvalidPath   = errors.New("invalid path")
+	ErrZipTooLarge   = errors.New("zip content exceeds size limit")
 )
+
+// MaxUncompressedSize is the maximum total uncompressed size accepted when loading a ZIP.
+// Values <= 0 mean the default (512 MiB).
+var MaxUncompressedSize int64 = defaultMaxUncompressedSize
+
+const defaultMaxUncompressedSize int64 = 512 << 20
+
+// loadZipEntries reads all entries into zfs, enforcing MaxUncompressedSize.
+func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
+	limit := MaxUncompressedSize
+	if limit <= 0 {
+		limit = defaultMaxUncompressedSize
+	}
+
+	// Reject on declared sizes first, without decompressing anything
+	var declared uint64
+	for _, f := range files {
+		declared += f.UncompressedSize64
+		if declared > uint64(limit) || declared < f.UncompressedSize64 {
+			return ErrZipTooLarge
+		}
+	}
+
+	// Backstop: never read more than the limit, whatever the headers say
+	remaining := limit
+	for _, f := range files {
+		name := normalizePath(f.Name)
+		if f.FileInfo().IsDir() {
+			zfs.cache.Add(name, true)
+			continue
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		content, err := io.ReadAll(io.LimitReader(rc, saturatingInc(remaining)))
+		rc.Close()
+		if err != nil {
+			return err
+		}
+		if int64(len(content)) > remaining {
+			return ErrZipTooLarge
+		}
+		remaining -= int64(len(content))
+
+		zfs.files[name] = content
+		zfs.cache.Add(name, false)
+	}
+	return nil
+}
+
+// saturatingInc returns n+1, or n when n+1 would overflow.
+func saturatingInc(n int64) int64 {
+	if n == math.MaxInt64 {
+		return n
+	}
+	return n + 1
+}
 
 // ZipFs implements FsInterface for in-memory ZIP operations.
 type ZipFs struct {
@@ -46,26 +107,8 @@ func NewZipFsFromBytes(data []byte) (*ZipFs, error) {
 		return nil, err
 	}
 
-	for _, f := range reader.File {
-		name := normalizePath(f.Name)
-		if f.FileInfo().IsDir() {
-			zfs.cache.Add(name, true)
-			continue
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return nil, err
-		}
-
-		content, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return nil, err
-		}
-
-		zfs.files[name] = content
-		zfs.cache.Add(name, false)
+	if err := loadZipEntries(zfs, reader.File); err != nil {
+		return nil, err
 	}
 
 	return zfs, nil
@@ -85,26 +128,8 @@ func NewZipFsFromFile(filename string) (*ZipFs, error) {
 		cache: NewPathCache(),
 	}
 
-	for _, f := range reader.File {
-		name := normalizePath(f.Name)
-		if f.FileInfo().IsDir() {
-			zfs.cache.Add(name, true)
-			continue
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return nil, err
-		}
-
-		content, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return nil, err
-		}
-
-		zfs.files[name] = content
-		zfs.cache.Add(name, false)
+	if err := loadZipEntries(zfs, reader.File); err != nil {
+		return nil, err
 	}
 
 	return zfs, nil

@@ -1,6 +1,9 @@
 package processor
 
 import (
+	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -316,5 +319,87 @@ func TestServerBackend_CustomClientWinsOverSecureSSL(t *testing.T) {
 
 	if b.httpClient != custom {
 		t.Error("custom client was replaced")
+	}
+}
+
+func pdfServer(t *testing.T, size int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte(strings.Repeat("p", size)))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestServerBackend_Render_ResponseTooLarge(t *testing.T) {
+	srv := pdfServer(t, 2048)
+	_, err := NewServerBackend(srv.URL, "k", WithMaxResponseSize(1024)).Render([]byte("z"), nil)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("expected ErrResponseTooLarge, got %v", err)
+	}
+}
+
+func TestServerBackend_Render_ResponseAtLimit(t *testing.T) {
+	srv := pdfServer(t, 1024)
+	out, err := NewServerBackend(srv.URL, "k", WithMaxResponseSize(1024)).Render([]byte("z"), nil)
+	if err != nil || len(out) != 1024 {
+		t.Fatalf("len=%d err=%v", len(out), err)
+	}
+}
+
+func TestServerBackend_Render_MaxInt64Limit(t *testing.T) {
+	srv := pdfServer(t, 100)
+	out, err := NewServerBackend(srv.URL, "k", WithMaxResponseSize(math.MaxInt64)).Render([]byte("z"), nil)
+	if err != nil || len(out) != 100 {
+		t.Fatalf("len=%d err=%v", len(out), err)
+	}
+}
+
+func TestServerBackend_Render_ErrorBodyTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(strings.Repeat("x", 10000)))
+	}))
+	defer srv.Close()
+	_, err := NewServerBackend(srv.URL, "k").Render([]byte("z"), nil)
+	if err == nil || !strings.Contains(err.Error(), "status 500") || !strings.Contains(err.Error(), "(truncated)") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(err.Error()) >= 1200 {
+		t.Errorf("error too long: %d", len(err.Error()))
+	}
+}
+
+func TestServerBackend_Render_LargeErrorKeepsStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(strings.Repeat("x", 4096)))
+	}))
+	defer srv.Close()
+	_, err := NewServerBackend(srv.URL, "k", WithMaxResponseSize(1024)).Render([]byte("z"), nil)
+	if err == nil || !strings.Contains(err.Error(), "status 502") || errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestServerBackend_Render_NonPositiveMaxUsesDefault(t *testing.T) {
+	srv := pdfServer(t, 100)
+	for _, n := range []int64{0, -1} {
+		for _, custom := range []bool{false, true} {
+			n, custom := n, custom
+			t.Run(fmt.Sprintf("max=%d/customClient=%v", n, custom), func(t *testing.T) {
+				opts := []ServerOption{WithMaxResponseSize(n)}
+				if custom {
+					opts = append(opts, WithHTTPClient(srv.Client()))
+				}
+				out, err := NewServerBackend(srv.URL, "k", opts...).Render([]byte("z"), nil)
+				if err != nil || len(out) != 100 {
+					t.Fatalf("len=%d err=%v", len(out), err)
+				}
+			})
+		}
 	}
 }

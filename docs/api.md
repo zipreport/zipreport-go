@@ -167,6 +167,9 @@ result := report.Build("./source", "output.zpt", opts)
 
 // Build to ZipFs (in-memory)
 zfs, result := report.BuildZipFs("./source", nil)
+if !result.Success() {
+    log.Fatal(result.Error()) // zfs is nil when the build failed
+}
 ```
 
 ### JobResult

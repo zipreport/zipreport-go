@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path"
+	"sort"
 )
 
 var (
@@ -240,8 +241,14 @@ func (zfs *ZipFs) Save() ([]byte, error) {
 		}
 	}
 
-	// Write directories
+	dirNames := make([]string, 0, len(dirs))
 	for dir := range dirs {
+		dirNames = append(dirNames, dir)
+	}
+	sort.Strings(dirNames)
+
+	// Write directories
+	for _, dir := range dirNames {
 		_, err := writer.Create(dir + "/")
 		if err != nil {
 			return nil, err
@@ -249,7 +256,13 @@ func (zfs *ZipFs) Save() ([]byte, error) {
 	}
 
 	// Write files
-	for name, content := range zfs.files {
+	names := make([]string, 0, len(zfs.files))
+	for name := range zfs.files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		content := zfs.files[name]
 		w, err := writer.Create(name)
 		if err != nil {
 			return nil, err

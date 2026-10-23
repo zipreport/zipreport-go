@@ -106,6 +106,11 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 		return nil, result
 	}
 
+	// Walk the real folder even when srcDir is a symlink (WalkDir doesn't follow a symlinked root)
+	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolved
+	}
+
 	// Validate required files exist
 	manifestPath := filepath.Join(absPath, FileManifest)
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
@@ -144,7 +149,7 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 		}
 
 		// Skip hidden files if configured
-		if opts.ExcludeHidden && strings.HasPrefix(d.Name(), ".") {
+		if opts.ExcludeHidden && path != absPath && strings.HasPrefix(d.Name(), ".") {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -167,12 +172,22 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 				return nil
 			}
 			if info.IsDir() {
-				return nil // Skip directories from symlinks
+				linkRel, _ := filepath.Rel(absPath, path)
+				result.errors = append(result.errors, fmt.Sprintf("symlinked directories are not supported: %s (copy the folder, or build without -s to skip it)", filepath.ToSlash(linkRel)))
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				return nil // sockets, devices, FIFOs are never template files
 			}
 		}
 
 		// Skip directories (they'll be created implicitly)
 		if d.IsDir() {
+			return nil
+		}
+
+		// Skip sockets, devices and FIFOs: reading a FIFO would block forever
+		if d.Type()&os.ModeSymlink == 0 && !d.Type().IsRegular() {
 			return nil
 		}
 
@@ -203,6 +218,19 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 	if err != nil {
 		result.success = false
 		result.errors = append(result.errors, fmt.Sprintf("walk error: %v", err))
+		return nil, result
+	}
+
+	// The required files must be in the package (e.g. not skipped as symlinks)
+	for _, required := range []string{FileManifest, FileIndex} {
+		if !zfs.Exists(required) || zfs.IsDir(required) {
+			result.errors = append(result.errors, fmt.Sprintf("%s was not included in the build (is it a symlink? use -s (FollowSymlinks))", required))
+		}
+	}
+
+	// A build that skipped any file is not a successful build
+	if len(result.errors) > 0 {
+		result.success = false
 		return nil, result
 	}
 

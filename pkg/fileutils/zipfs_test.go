@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -463,5 +464,45 @@ func TestZipFs_Clone_Independent(t *testing.T) {
 	}
 	if !clone.IsDir("a") {
 		t.Error("clone lost directory a")
+	}
+}
+
+func TestZipFs_SaveDeterministic(t *testing.T) {
+	names := []string{"z.txt", "a/b.txt", "m/n/o.txt", "c.txt"}
+	a := NewZipFs()
+	for _, n := range names {
+		if err := a.Add(n, []byte("content "+n), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := NewZipFs()
+	for i := len(names) - 1; i >= 0; i-- {
+		if err := b.Add(names[i], []byte("content "+names[i]), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	da, err := a.Save()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := b.Save()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(da, db) {
+		t.Error("Save output differs for identical content")
+	}
+
+	r, err := zip.NewReader(bytes.NewReader(da), int64(len(da)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range r.File {
+		got = append(got, f.Name)
+	}
+	want := []string{"a/", "m/", "m/n/", "a/b.txt", "c.txt", "m/n/o.txt", "z.txt"}
+	if !slices.Equal(got, want) {
+		t.Errorf("entry order = %v, want %v", got, want)
 	}
 }

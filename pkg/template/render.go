@@ -2,6 +2,7 @@
 package template
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,7 +89,7 @@ func NewMiyaRender(r *report.ReportFile, opts ...RenderOption) *MiyaRender {
 
 	// Register default filters
 	if err := registerDefaultFilters(mr.env, r); err != nil {
-		// Log the error but continue - filters may not be needed
+		// Reported by Render and RenderString
 		mr.filterError = err
 	}
 
@@ -112,6 +113,9 @@ func (r *MiyaRender) Render(data map[string]interface{}) (string, error) {
 
 // RenderTemplate renders a specific template with the given data.
 func (r *MiyaRender) RenderTemplate(templateName string, data map[string]interface{}) (string, error) {
+	if r.filterError != nil {
+		return "", r.filterError
+	}
 	// Work on a copy so the caller's map is never modified
 	merged := make(map[string]interface{}, len(data))
 	for k, v := range data {
@@ -119,15 +123,15 @@ func (r *MiyaRender) RenderTemplate(templateName string, data map[string]interfa
 	}
 	data = merged
 
-	// Try to load default data from data.json
+	// Merge default data from data.json (provided data takes precedence)
 	if r.report.Exists(report.FileData) {
 		defaultData, err := r.loadDefaultData()
-		if err == nil {
-			// Merge default data with provided data (provided takes precedence)
-			for k, v := range defaultData {
-				if _, exists := data[k]; !exists {
-					data[k] = v
-				}
+		if err != nil {
+			return "", fmt.Errorf("invalid %s: %w", report.FileData, err)
+		}
+		for k, v := range defaultData {
+			if _, exists := data[k]; !exists {
+				data[k] = v
 			}
 		}
 	}
@@ -177,6 +181,12 @@ func (r *MiyaRender) loadDefaultData() (map[string]interface{}, error) {
 		return nil, err
 	}
 
+	// An empty file means no defaults; tolerate a UTF-8 byte-order mark
+	content = bytes.TrimPrefix(content, []byte("\xef\xbb\xbf"))
+	if len(bytes.TrimSpace(content)) == 0 {
+		return nil, nil
+	}
+
 	var data map[string]interface{}
 	if err := json.Unmarshal(content, &data); err != nil {
 		return nil, err
@@ -208,6 +218,9 @@ func (r *MiyaRender) validateParams(data map[string]interface{}) error {
 
 // RenderString renders a template from a string.
 func (r *MiyaRender) RenderString(source string, data map[string]interface{}) (string, error) {
+	if r.filterError != nil {
+		return "", r.filterError
+	}
 	// Apply wrapper if present
 	if r.wrapper != nil {
 		r.wrapper.Configure(r.env)

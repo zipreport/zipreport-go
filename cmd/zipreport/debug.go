@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -131,17 +130,8 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Load data from data.json if exists
-	var data map[string]interface{}
-	if zpt.Exists(report.FileData) {
-		dataBytes, err := zpt.GetBytes(report.FileData)
-		if err == nil {
-			_ = json.Unmarshal(dataBytes, &data)
-		}
-	}
-	if data == nil {
-		data = make(map[string]interface{})
-	}
+	// Default data comes from data.json, merged by the renderer
+	data := make(map[string]interface{})
 
 	// Render into an in-memory copy so nothing is written to the template directory
 	renderer := template.NewMiyaRender(zpt.Clone(), template.WithStrictParams(false))

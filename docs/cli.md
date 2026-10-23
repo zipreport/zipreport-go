@@ -186,6 +186,8 @@ Optional file containing default data for debugging:
 }
 ```
 
+If present, it must contain a JSON object (an empty file is treated as no data); a malformed data.json makes every render fail with "invalid data.json".
+
 ## Examples
 
 ### Development Workflow

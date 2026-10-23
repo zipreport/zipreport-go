@@ -141,3 +141,20 @@ func TestNewDebugServer_RejectsForeignHost(t *testing.T) {
 		t.Errorf("opted-in host status = %d, want 200", got)
 	}
 }
+
+func TestDebugHandler_InvalidDataJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{bad`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := &debugHandler{source: dir}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid data.json") {
+		t.Errorf("body = %q, want invalid data.json", rec.Body.String())
+	}
+}

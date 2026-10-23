@@ -62,6 +62,7 @@ type MiyaRender struct {
 }
 
 // NewMiyaRender creates a new MiyaRender for a report.
+// Rendering writes the output (and any generated images) into r; render r.Clone() to keep r unchanged.
 func NewMiyaRender(r *report.ReportFile, opts ...RenderOption) *MiyaRender {
 	options := DefaultRenderOptions()
 
@@ -111,10 +112,12 @@ func (r *MiyaRender) Render(data map[string]interface{}) (string, error) {
 
 // RenderTemplate renders a specific template with the given data.
 func (r *MiyaRender) RenderTemplate(templateName string, data map[string]interface{}) (string, error) {
-	// Load default data if not provided and data.json exists
-	if data == nil {
-		data = make(map[string]interface{})
+	// Work on a copy so the caller's map is never modified
+	merged := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		merged[k] = v
 	}
+	data = merged
 
 	// Try to load default data from data.json
 	if r.report.Exists(report.FileData) {

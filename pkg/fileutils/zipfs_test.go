@@ -436,3 +436,32 @@ func TestZipFs_PathNormalization(t *testing.T) {
 		t.Error("dir/file3.txt should exist")
 	}
 }
+
+func TestZipFs_Clone_Independent(t *testing.T) {
+	orig := NewZipFs()
+	if err := orig.Add("a/b.txt", []byte("one"), false); err != nil {
+		t.Fatal(err)
+	}
+	clone := orig.Clone()
+
+	if err := clone.Add("new.txt", []byte("n"), false); err != nil {
+		t.Fatal(err)
+	}
+	if orig.Exists("new.txt") {
+		t.Error("write to clone leaked into original")
+	}
+
+	if err := orig.Add("a/b.txt", []byte("two"), true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := clone.GetBytes("a/b.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "one" {
+		t.Errorf("clone saw original's write: %q", got)
+	}
+	if !clone.IsDir("a") {
+		t.Error("clone lost directory a")
+	}
+}

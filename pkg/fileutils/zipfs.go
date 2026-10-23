@@ -277,6 +277,17 @@ func (zfs *ZipFs) SaveToFile(filename string) error {
 	return writeFile(filename, data)
 }
 
+// Clone returns an independent copy of the ZipFs. File contents are shared with
+// the original, which is safe because stored content is never modified in place.
+func (zfs *ZipFs) Clone() *ZipFs {
+	c := NewZipFs()
+	for name, content := range zfs.files {
+		c.files[name] = content
+		c.cache.Add(name, false)
+	}
+	return c
+}
+
 // Files returns a list of all file paths.
 func (zfs *ZipFs) Files() []string {
 	result := make([]string, 0, len(zfs.files))

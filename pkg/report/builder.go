@@ -212,28 +212,12 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 // BuildFromReportFile creates a new ZipFs from an existing ReportFile.
 // This is useful for converting a directory-based report to a .zpt file.
 func BuildFromReportFile(report *ReportFile) (*fileutils.ZipFs, error) {
-	return report.exportToZipFull()
-}
-
-// exportToZipFull is a more complete export that handles DiskFs properly.
-func (r *ReportFile) exportToZipFull() (*fileutils.ZipFs, error) {
-	// If already a ZipFs, just return a copy
-	if zfs, ok := r.fs.(*fileutils.ZipFs); ok {
-		data, err := zfs.Save()
-		if err != nil {
-			return nil, err
-		}
-		return fileutils.NewZipFsFromBytes(data)
+	zfs, err := snapshot(report.fs, report.manifest)
+	if err != nil {
+		return nil, err
 	}
-
-	// For DiskFs, we need to use the builder
-	if dfs, ok := r.fs.(*fileutils.DiskFs); ok {
-		zfs, result := BuildZipFs(dfs.BasePath(), DefaultBuildOptions())
-		if !result.Success() {
-			return nil, fmt.Errorf("build failed: %s", result.Error())
-		}
-		return zfs, nil
+	if err := report.addManifestIfMissing(zfs); err != nil {
+		return nil, err
 	}
-
-	return nil, fmt.Errorf("unsupported file system type")
+	return zfs, nil
 }

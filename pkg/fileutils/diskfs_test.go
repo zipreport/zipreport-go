@@ -310,3 +310,42 @@ func TestDiskFs_PathTraversal(t *testing.T) {
 		t.Errorf("Expected ErrInvalidPath for path traversal write, got %v", err)
 	}
 }
+
+func TestDiskFs_Snapshot_CopiesNestedAndSkipsHiddenAndGen(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"index.html":      "i",
+		"css/s.css":       "c",
+		".DS_Store":       "x",
+		".git/x":          "x",
+		"_gen_7.png":      "x",
+		"sub/_gen_ok.png": "k",
+	}
+	for name, content := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dfs, err := NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zfs, err := dfs.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"index.html", "css/s.css", "sub/_gen_ok.png"} {
+		if !zfs.Exists(n) {
+			t.Errorf("%s missing from snapshot", n)
+		}
+	}
+	for _, n := range []string{".DS_Store", ".git/x", "_gen_7.png"} {
+		if zfs.Exists(n) {
+			t.Errorf("%s should not be in snapshot", n)
+		}
+	}
+}

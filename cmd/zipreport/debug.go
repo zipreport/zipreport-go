@@ -95,8 +95,8 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		data = make(map[string]interface{})
 	}
 
-	// Render template
-	renderer := template.NewMiyaRender(zpt, template.WithStrictParams(false))
+	// Render into an in-memory copy so nothing is written to the template directory
+	renderer := template.NewMiyaRender(zpt.Clone(), template.WithStrictParams(false))
 	output, err := renderer.Render(data)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Render error: %v", err), http.StatusInternalServerError)

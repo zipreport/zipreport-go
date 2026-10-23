@@ -292,3 +292,25 @@ func TestMiyaRender_TemplateNotFound(t *testing.T) {
 		t.Error("RenderTemplate should fail for non-existent template")
 	}
 }
+
+func TestMiyaRender_DoesNotMutateCallerData(t *testing.T) {
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte("{{ name }} {{ extra }}"), false)
+	_ = zfs.Add("data.json", []byte(`{"extra":"fromjson"}`), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+
+	r := report.NewReportFile(zfs, &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D"})
+	mr := NewMiyaRender(r)
+
+	data := map[string]interface{}{"name": "n"}
+	output, err := mr.Render(data)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if !strings.Contains(output, "fromjson") {
+		t.Errorf("output should contain data.json value: %s", output)
+	}
+	if _, ok := data["extra"]; ok || len(data) != 1 {
+		t.Errorf("caller's data was modified: %v", data)
+	}
+}

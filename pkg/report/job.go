@@ -49,6 +49,17 @@ func (j *ReportJob) GetReport() *ReportFile {
 	return j.report
 }
 
+// WithReport returns a copy of the job that uses r instead of the original report.
+func (j *ReportJob) WithReport(r *ReportFile) *ReportJob {
+	c := *j
+	c.report = r
+	if j.customMargins != nil {
+		m := *j.customMargins
+		c.customMargins = &m
+	}
+	return &c
+}
+
 // SetPageSize sets the page size.
 func (j *ReportJob) SetPageSize(size PageSize) *ReportJob {
 	j.pageSize = size

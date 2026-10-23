@@ -43,8 +43,10 @@ The API layer orchestrates template rendering and processing:
 
 ```go
 func (b *BaseReport) Render(job, data, wrapper) *JobResult {
-    // 1. Create renderer
-    renderer := template.NewMiyaRender(job.GetReport(), opts...)
+    // 1. Render into a private copy of the report (writes go to an in-memory overlay)
+    work := job.GetReport().Clone()
+    job = job.WithReport(work)
+    renderer := template.NewMiyaRender(work, opts...)
 
     // 2. Render template
     renderer.Render(data)

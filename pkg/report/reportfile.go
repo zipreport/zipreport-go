@@ -2,7 +2,11 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"path"
+	"slices"
+	"strings"
 
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 )
@@ -40,6 +44,113 @@ func (r *ReportFile) GetManifest() *Manifest {
 // GetFs returns the underlying file system.
 func (r *ReportFile) GetFs() fileutils.FsInterface {
 	return r.fs
+}
+
+// Clone returns a copy of the report whose writes (such as rendering output and
+// generated images) go to a private in-memory layer. Reads fall through to the
+// original file system, which is never modified.
+func (r *ReportFile) Clone() *ReportFile {
+	manifest := *r.manifest
+	manifest.Params = slices.Clone(r.manifest.Params)
+	return NewReportFile(fileutils.NewOverlayFs(r.fs), &manifest)
+}
+
+// snapshot materialises fs into a new ZipFs holding every file a renderer needs.
+func snapshot(fs fileutils.FsInterface, manifest *Manifest) (*fileutils.ZipFs, error) {
+	switch src := fs.(type) {
+	case *fileutils.ZipFs:
+		return src.Clone(), nil
+	case *fileutils.DiskFs:
+		return src.Snapshot()
+	case *fileutils.OverlayFs:
+		zfs, err := snapshot(src.Base(), manifest)
+		if err != nil {
+			return nil, err
+		}
+		overlay := src.Overlay()
+		for _, name := range overlay.Files() {
+			content, err := overlay.GetBytes(name)
+			if err != nil {
+				return nil, err
+			}
+			if err := zfs.Add(name, content, true); err != nil {
+				return nil, err
+			}
+		}
+		return zfs, nil
+	default:
+		return snapshotGeneric(fs, manifest)
+	}
+}
+
+// maxCopyDepth bounds folder nesting when copying a custom file system.
+const maxCopyDepth = 32
+
+// snapshotGeneric copies a custom FsInterface by listing it, then adds any of the
+// report's known files that listing did not provide.
+func snapshotGeneric(fs fileutils.FsInterface, manifest *Manifest) (*fileutils.ZipFs, error) {
+	zfs := fileutils.NewZipFs()
+	for _, root := range []string{"", "."} {
+		if _, err := fs.List(root); err == nil {
+			if err := copyTree(fs, zfs, root, "", 0); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+
+	// Always include the files a report is known to need, even when listing is unsupported or incomplete
+	known := []string{FileManifest, FileIndex, FileReport, FileData}
+	if manifest.Report != "" {
+		known = append(known, manifest.Report)
+	}
+	for _, name := range known {
+		if zfs.Exists(name) || !fs.Exists(name) {
+			continue
+		}
+		content, err := fs.GetBytes(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", name, err)
+		}
+		if err := zfs.Add(name, content, true); err != nil {
+			return nil, err
+		}
+	}
+	return zfs, nil
+}
+
+// copyTree copies every non-hidden readable file under src into zfs under dst.
+// Entries that cannot be listed or read are skipped, as the previous export did.
+func copyTree(fs fileutils.FsInterface, zfs *fileutils.ZipFs, src, dst string, depth int) error {
+	if depth > maxCopyDepth {
+		return fmt.Errorf("folder nesting deeper than %d at %q", maxCopyDepth, dst)
+	}
+	names, err := fs.List(src)
+	if err != nil {
+		return nil
+	}
+	for _, name := range names {
+		name = path.Base(name) // tolerate implementations that return full paths
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		srcPath := path.Join(src, name)
+		dstPath := path.Join(dst, name)
+		if fs.IsDir(srcPath) {
+			if err := copyTree(fs, zfs, srcPath, dstPath, depth+1); err != nil {
+				return err
+			}
+			continue
+		}
+		content, err := fs.GetBytes(srcPath)
+		if err != nil {
+			continue
+		}
+		if err := zfs.Add(dstPath, content, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetParam retrieves a manifest field by name with a default value.
@@ -97,64 +208,42 @@ func (r *ReportFile) Add(name string, content []byte, overwrite bool) error {
 
 // Save exports the report as ZIP bytes.
 func (r *ReportFile) Save() ([]byte, error) {
-	// Type assertion to check if fs is a ZipFs
 	if zfs, ok := r.fs.(*fileutils.ZipFs); ok {
 		return zfs.Save()
 	}
 
-	// For DiskFs or other implementations, we need to create a new ZipFs
-	// and copy all files into it
-	return r.exportToZip()
-}
-
-// exportToZip creates a ZIP from any FsInterface implementation.
-func (r *ReportFile) exportToZip() ([]byte, error) {
-	zfs := fileutils.NewZipFs()
-
-	// Copy manifest
-	manifestData, err := json.MarshalIndent(r.manifest, "", "  ")
+	zfs, err := snapshot(r.fs, r.manifest)
 	if err != nil {
 		return nil, err
 	}
-	if err := zfs.Add(FileManifest, manifestData, true); err != nil {
+	if err := r.addManifestIfMissing(zfs); err != nil {
 		return nil, err
 	}
-
-	// If the underlying fs is a DiskFs, we need to walk the directory
-	// For simplicity, we'll copy known files and any that the manifest references
-	filesToCopy := []string{FileIndex}
-	if r.manifest.Report != "" && r.manifest.Report != FileReport {
-		filesToCopy = append(filesToCopy, r.manifest.Report)
+	if err := r.checkRequired(zfs); err != nil {
+		return nil, err
 	}
-
-	// Copy index.html
-	for _, filename := range filesToCopy {
-		if r.fs.Exists(filename) {
-			content, err := r.fs.GetBytes(filename)
-			if err != nil {
-				continue
-			}
-			_ = zfs.Add(filename, content, true)
-		}
-	}
-
-	// Copy report.html if it exists
-	if r.fs.Exists(FileReport) {
-		content, err := r.fs.GetBytes(FileReport)
-		if err == nil {
-			_ = zfs.Add(FileReport, content, true)
-		}
-	}
-
-	// Copy data.json if it exists
-	if r.fs.Exists(FileData) {
-		content, err := r.fs.GetBytes(FileData)
-		if err == nil {
-			_ = zfs.Add(FileData, content, true)
-		}
-	}
-
 	return zfs.Save()
+}
+
+// checkRequired fails when the template every render needs is missing from the package.
+// manifest.Report is the render output, so it is not required before rendering.
+func (r *ReportFile) checkRequired(zfs *fileutils.ZipFs) error {
+	if !zfs.Exists(FileIndex) || zfs.IsDir(FileIndex) {
+		return fmt.Errorf("%s is missing or unreadable", FileIndex)
+	}
+	return nil
+}
+
+// addManifestIfMissing writes the in-memory manifest when the package has none.
+func (r *ReportFile) addManifestIfMissing(zfs *fileutils.ZipFs) error {
+	if zfs.Exists(FileManifest) {
+		return nil
+	}
+	data, err := json.MarshalIndent(r.manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return zfs.Add(FileManifest, data, true)
 }
 
 // Title returns the report title.

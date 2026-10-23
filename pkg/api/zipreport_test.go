@@ -1,6 +1,12 @@
 package api
 
 import (
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
@@ -198,5 +204,189 @@ func TestRenderMIME(t *testing.T) {
 
 	if !result.Success {
 		t.Fatalf("RenderMIME failed: %s", result.Error)
+	}
+}
+
+// capturingBackend records the ZPT payload and returns its rendered report.html as the "PDF"
+type capturingBackend struct {
+	mu       sync.Mutex
+	payloads [][]byte
+}
+
+func (c *capturingBackend) Render(zptData []byte, options map[string]interface{}) ([]byte, error) {
+	c.mu.Lock()
+	c.payloads = append(c.payloads, zptData)
+	c.mu.Unlock()
+	zfs, err := fileutils.NewZipFsFromBytes(zptData)
+	if err != nil {
+		return nil, err
+	}
+	return zfs.GetBytes("report.html")
+}
+
+const isolationManifest = `{"title":"T","author":"A","version":"1","description":"D"}`
+
+func newIsolationReport(t *testing.T, index string) *report.ReportFile {
+	t.Helper()
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte(index), false)
+	_ = zfs.Add("manifest.json", []byte(isolationManifest), false)
+	return report.NewReportFile(zfs, &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D"})
+}
+
+func newIsolationDirReport(t *testing.T, index string) (*report.ReportFile, string) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"manifest.json": isolationManifest,
+		"index.html":    index,
+		"css/s.css":     "body{}",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rf, err := report.LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rf, dir
+}
+
+func TestBaseReport_Render_DoesNotModifyReport(t *testing.T) {
+	rf := newIsolationReport(t, "<p>{{ name }}</p>")
+	zr := NewZipReportWithBackend(&capturingBackend{})
+	result := zr.RenderDefaults(rf, map[string]interface{}{"name": "Alice"}, nil)
+	if !result.Success {
+		t.Fatalf("render failed: %s", result.Error)
+	}
+	if !strings.Contains(string(result.Report), "Alice") {
+		t.Errorf("report = %q, want to contain Alice", result.Report)
+	}
+	if rf.Exists("report.html") {
+		t.Error("render modified the caller's report")
+	}
+}
+
+func TestBaseReport_Render_DirectoryReportSendsAssets(t *testing.T) {
+	rf, dir := newIsolationDirReport(t, `<link href="css/s.css"><p>{{ name }}</p>`)
+	cb := &capturingBackend{}
+	zr := NewZipReportWithBackend(cb)
+	result := zr.RenderDefaults(rf, map[string]interface{}{"name": "Alice"}, nil)
+	if !result.Success {
+		t.Fatalf("render failed: %s", result.Error)
+	}
+	zfs, err := fileutils.NewZipFsFromBytes(cb.payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !zfs.Exists("css/s.css") {
+		t.Error("css/s.css not sent to the server")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "report.html")); !os.IsNotExist(err) {
+		t.Errorf("report.html written to the source folder (err=%v)", err)
+	}
+}
+
+func runConcurrentRenders(t *testing.T, rf *report.ReportFile, goroutines, iterations int) {
+	t.Helper()
+	zr := NewZipReportWithBackend(&capturingBackend{})
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		failures []string
+		started  sync.WaitGroup
+	)
+	start := make(chan struct{})
+	started.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			started.Done()
+			<-start
+			for i := 0; i < iterations; i++ {
+				name := fmt.Sprintf("user-%d-%d", g, i)
+				result := zr.RenderDefaults(rf, map[string]interface{}{"name": name}, nil)
+				if !result.Success || !strings.Contains(string(result.Report), name) {
+					mu.Lock()
+					failures = append(failures, fmt.Sprintf("%s: success=%v err=%q report=%q", name, result.Success, result.Error, result.Report))
+					mu.Unlock()
+				}
+			}
+		}(g)
+	}
+	started.Wait()
+	close(start)
+	wg.Wait()
+	if len(failures) > 0 {
+		t.Errorf("%d failed renders, first: %s", len(failures), failures[0])
+	}
+}
+
+func TestBaseReport_Render_ConcurrentSharedReport(t *testing.T) {
+	rf := newIsolationReport(t, "<p>{{ name }}</p>")
+	runConcurrentRenders(t, rf, 16, 50)
+}
+
+func TestBaseReport_Render_ConcurrentSharedDirectoryReport(t *testing.T) {
+	rf, _ := newIsolationDirReport(t, "<p>{{ name }}</p>")
+	runConcurrentRenders(t, rf, 8, 20)
+}
+
+func TestBaseReport_Render_NoImageAccumulation(t *testing.T) {
+	rf := newIsolationReport(t, "{{ img|png }}")
+	cb := &capturingBackend{}
+	zr := NewZipReportWithBackend(cb)
+	for i := 0; i < 2; i++ {
+		result := zr.RenderDefaults(rf, map[string]interface{}{"img": []byte("PNG")}, nil)
+		if !result.Success {
+			t.Fatalf("render %d failed: %s", i, result.Error)
+		}
+	}
+	zfs, err := fileutils.NewZipFsFromBytes(cb.payloads[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, f := range zfs.Files() {
+		if strings.HasPrefix(f, "_gen_") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("payload has %d _gen_ files, want 1 (%v)", n, zfs.Files())
+	}
+}
+
+func TestMIMEReport_Render_UsesRenderedCopy(t *testing.T) {
+	rf := newIsolationReport(t, "<p>{{ name }}</p>")
+	result := NewMIMEReport().RenderDefaults(rf, map[string]interface{}{"name": "Zed"}, nil)
+	if !result.Success {
+		t.Fatalf("render failed: %s", result.Error)
+	}
+	msg := string(result.Report)
+	marker := "Content-Transfer-Encoding: base64\r\n\r\n"
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		t.Fatalf("no base64 part in %q", msg)
+	}
+	body := msg[i+len(marker):]
+	if j := strings.Index(body, "\r\n--"); j >= 0 {
+		body = body[:j]
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(body, "\r\n", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(decoded), "Zed") {
+		t.Errorf("HTML part = %q, want to contain Zed", decoded)
+	}
+	if rf.Exists("report.html") {
+		t.Error("render modified the caller's report")
 	}
 }

@@ -1,7 +1,16 @@
 package report
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 )
@@ -313,5 +322,255 @@ func TestJobResult(t *testing.T) {
 	}
 	if errResult2.Error != "file not found" {
 		t.Errorf("Error = %q, want %q", errResult2.Error, "file not found")
+	}
+}
+
+func savedZip(t *testing.T, rf *ReportFile) *fileutils.ZipFs {
+	t.Helper()
+	data, err := rf.Save()
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	zfs, err := fileutils.NewZipFsFromBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return zfs
+}
+
+func TestReportFile_Save_DiskFsIncludesAssets(t *testing.T) {
+	dir := createValidReportDir(t)
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zfs := savedZip(t, rf)
+	got, err := zfs.GetBytes("assets/style.css")
+	if err != nil || string(got) != "body { color: red; }" {
+		t.Errorf("assets/style.css = %q, %v", got, err)
+	}
+	if !zfs.Exists("index.html") || !zfs.Exists("manifest.json") {
+		t.Error("index.html or manifest.json missing")
+	}
+}
+
+func TestReportFile_Clone_DoesNotWriteToDisk(t *testing.T) {
+	dir := createValidReportDir(t)
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := rf.Clone()
+	if err := c.Add("report.html", []byte("x"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "report.html")); !os.IsNotExist(err) {
+		t.Errorf("report.html written to disk (err=%v)", err)
+	}
+	if !c.Exists("report.html") {
+		t.Error("clone does not see its own write")
+	}
+}
+
+func TestReportFile_Clone_SaveIncludesOverlayWrites(t *testing.T) {
+	dir := createValidReportDir(t)
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := rf.Clone()
+	_ = c.Add("report.html", []byte("R"), true)
+	_ = c.Add("_gen_1.png", []byte("P"), true)
+	zfs := savedZip(t, c)
+	for name, want := range map[string]string{"report.html": "R", "_gen_1.png": "P", "assets/style.css": "body { color: red; }"} {
+		got, err := zfs.GetBytes(name)
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+}
+
+func TestReportFile_Clone_ZipFsIndependent(t *testing.T) {
+	rf := createTestReportFile()
+	c := rf.Clone()
+	if err := c.Add("report.html", []byte("x"), true); err != nil {
+		t.Fatal(err)
+	}
+	if rf.Exists("report.html") {
+		t.Error("clone write reached the original")
+	}
+	if c.Title() != rf.Title() {
+		t.Errorf("title = %q, want %q", c.Title(), rf.Title())
+	}
+}
+
+func TestReportFile_Save_DiskFsWithoutManifestOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<p></p>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dfs, err := fileutils.NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := NewReportFile(dfs, &Manifest{Title: "T", Author: "A", Version: "1", Description: "D"})
+	zfs := savedZip(t, rf)
+	got, err := zfs.GetBytes("manifest.json")
+	if err != nil || !strings.Contains(string(got), `"title": "T"`) {
+		t.Errorf("manifest.json = %q, %v", got, err)
+	}
+}
+
+// mapFsAdapter adapts an fs.FS (as an io/fs adapter for go:embed would) to FsInterface;
+// List errors for "" and works for ".".
+type mapFsAdapter struct{ m fstest.MapFS }
+
+func (a mapFsAdapter) Get(name string) (io.ReadCloser, error) {
+	b, err := a.GetBytes(name)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
+func (a mapFsAdapter) GetBytes(name string) ([]byte, error) { return fs.ReadFile(a.m, name) }
+func (a mapFsAdapter) Add(string, []byte, bool) error       { return errors.New("read-only") }
+func (a mapFsAdapter) Mkdir(string) error                   { return errors.New("read-only") }
+func (a mapFsAdapter) Remove(string) error                  { return errors.New("read-only") }
+func (a mapFsAdapter) Exists(name string) bool              { _, err := fs.Stat(a.m, name); return err == nil }
+func (a mapFsAdapter) IsDir(name string) bool {
+	info, err := fs.Stat(a.m, name)
+	return err == nil && info.IsDir()
+}
+func (a mapFsAdapter) List(p string) ([]string, error) {
+	entries, err := fs.ReadDir(a.m, p)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names, nil
+}
+func (a mapFsAdapter) filtered(p string, dirs bool) ([]string, error) {
+	entries, err := fs.ReadDir(a.m, p)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() == dirs {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+func (a mapFsAdapter) ListFiles(p string) ([]string, error) { return a.filtered(p, false) }
+func (a mapFsAdapter) ListDirs(p string) ([]string, error)  { return a.filtered(p, true) }
+
+type noListAdapter struct{ mapFsAdapter }
+
+func (noListAdapter) List(string) ([]string, error) { return nil, errors.New("no listing") }
+
+type emptyListAdapter struct{ mapFsAdapter }
+
+func (emptyListAdapter) List(string) ([]string, error) { return nil, nil }
+
+func adapterFiles() fstest.MapFS {
+	return fstest.MapFS{
+		"index.html":    {Data: []byte("<p></p>")},
+		"manifest.json": {Data: []byte(`{"title":"T"}`)},
+		"img/a.png":     {Data: []byte("png")},
+	}
+}
+
+func TestReportFile_Save_IOFSAdapter(t *testing.T) {
+	rf := NewReportFile(mapFsAdapter{adapterFiles()}, &Manifest{Title: "T"})
+	zfs := savedZip(t, rf)
+	for _, n := range []string{"index.html", "manifest.json", "img/a.png"} {
+		if !zfs.Exists(n) {
+			t.Errorf("%s missing", n)
+		}
+	}
+}
+
+func TestReportFile_Save_CustomFsWithoutListingFallsBack(t *testing.T) {
+	rf := NewReportFile(noListAdapter{mapFsAdapter{adapterFiles()}}, &Manifest{Title: "T"})
+	zfs := savedZip(t, rf)
+	for _, n := range []string{"index.html", "manifest.json"} {
+		if !zfs.Exists(n) {
+			t.Errorf("%s missing", n)
+		}
+	}
+}
+
+func TestReportFile_Save_CustomFsListingIncompleteAddsKnownFiles(t *testing.T) {
+	rf := NewReportFile(emptyListAdapter{mapFsAdapter{adapterFiles()}}, &Manifest{Title: "T"})
+	zfs := savedZip(t, rf)
+	for _, n := range []string{"index.html", "manifest.json"} {
+		if !zfs.Exists(n) {
+			t.Errorf("%s missing", n)
+		}
+	}
+}
+
+func TestReportFile_Save_UnreadableIndexFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply to root")
+	}
+	dir := createValidReportDir(t)
+	idx := filepath.Join(dir, "index.html")
+	if err := os.Chmod(idx, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(idx, 0644) })
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = rf.Save()
+	if err == nil || !strings.Contains(err.Error(), "index.html") {
+		t.Errorf("Save err = %v, want error mentioning index.html", err)
+	}
+}
+
+func TestReportFile_Save_UnreadableUnusedFileSkipped(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply to root")
+	}
+	dir := createValidReportDir(t)
+	notes := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notes, []byte("n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(notes, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(notes, 0644) })
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zfs := savedZip(t, rf)
+	if !zfs.Exists("assets/style.css") {
+		t.Error("assets/style.css missing")
+	}
+}
+
+func TestReportJob_WithReport(t *testing.T) {
+	job := NewReportJob(createTestReportFile())
+	job.SetPageSize(PageLetter).SetLandscape(true).SetCustomMargins(&Margins{Top: 5})
+
+	other := createTestReportFile()
+	c := job.WithReport(other)
+
+	if c.GetReport() != other {
+		t.Error("copy does not use the new report")
+	}
+	if job.GetReport() == other {
+		t.Error("original job was modified")
+	}
+	if !reflect.DeepEqual(c.GetOptions(), job.GetOptions()) {
+		t.Errorf("options differ: %v vs %v", c.GetOptions(), job.GetOptions())
 	}
 }

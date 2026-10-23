@@ -1,8 +1,12 @@
 package fileutils
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -234,6 +238,83 @@ func (dfs *DiskFs) Remove(name string) error {
 // BasePath returns the base path of the DiskFs.
 func (dfs *DiskFs) BasePath() string {
 	return dfs.basePath
+}
+
+// maxSnapshotDepth bounds folder nesting in Snapshot.
+const maxSnapshotDepth = 32
+
+// Snapshot copies the folder into a new in-memory ZipFs, as sent to a renderer.
+// Hidden entries, root-level _gen_* files (generated images left by older versions),
+// non-regular files (sockets, FIFOs, devices) and broken symlinks are skipped.
+// Symlinks are followed only when they resolve inside the folder.
+func (dfs *DiskFs) Snapshot() (*ZipFs, error) {
+	root, err := filepath.EvalSymlinks(dfs.basePath)
+	if err != nil {
+		return nil, err
+	}
+	zfs := NewZipFs()
+	if err := snapshotDir(zfs, root, root, "", map[string]bool{root: true}, 0); err != nil {
+		return nil, err
+	}
+	return zfs, nil
+}
+
+// snapshotDir copies dir (a real path inside root) into zfs under rel.
+// ancestors holds the real paths of the folders being walked, to stop symlink loops.
+func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, depth int) error {
+	if depth > maxSnapshotDepth {
+		return fmt.Errorf("folder nesting deeper than %d at %q", maxSnapshotDepth, rel)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if depth > 0 && errors.Is(err, fs.ErrPermission) {
+			return nil // unreadable subfolder: skipped, as renders never needed it
+		}
+		return err
+	}
+	prefix := strings.TrimSuffix(root, string(filepath.Separator)) + string(filepath.Separator)
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || (rel == "" && strings.HasPrefix(name, "_gen_")) {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(filepath.Join(dir, name))
+		if err != nil {
+			continue // broken symlink
+		}
+		if real != root && !strings.HasPrefix(real, prefix) {
+			continue // symlink leaving the folder
+		}
+		info, err := os.Stat(real)
+		if err != nil {
+			continue
+		}
+		relName := path.Join(rel, name)
+		switch {
+		case info.IsDir():
+			if ancestors[real] {
+				continue // symlink loop
+			}
+			ancestors[real] = true
+			err := snapshotDir(zfs, root, real, relName, ancestors, depth+1)
+			delete(ancestors, real)
+			if err != nil {
+				return err
+			}
+		case info.Mode().IsRegular():
+			content, err := os.ReadFile(real)
+			if errors.Is(err, fs.ErrPermission) {
+				continue // unreadable file: skipped; Save checks the required files afterwards
+			}
+			if err != nil {
+				return fmt.Errorf("failed to read %s: %w", relName, err)
+			}
+			if err := zfs.Add(relName, content, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // writeFileImpl is the actual implementation used by ZipFs.SaveToFile

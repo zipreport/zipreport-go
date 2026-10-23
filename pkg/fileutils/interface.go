@@ -25,12 +25,15 @@ type FsInterface interface {
 	IsDir(name string) bool
 
 	// List returns all entries (files and directories) in a path.
+	// Names are base names; "" is the root.
 	List(path string) ([]string, error)
 
 	// ListFiles returns only files in a path.
+	// Names are base names; "" is the root.
 	ListFiles(path string) ([]string, error)
 
 	// ListDirs returns only directories in a path.
+	// Names are base names; "" is the root.
 	ListDirs(path string) ([]string, error)
 
 	// Remove removes a file or directory.

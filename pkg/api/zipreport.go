@@ -19,12 +19,16 @@ func (b *BaseReport) CreateJob(zpt *report.ReportFile) *report.ReportJob {
 
 // Render renders a report job with the given data.
 func (b *BaseReport) Render(job *report.ReportJob, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult {
+	// Render into a private copy so the caller's ReportFile is never modified
+	work := job.GetReport().Clone()
+	job = job.WithReport(work)
+
 	// Create renderer
 	var opts []template.RenderOption
 	if wrapper != nil {
 		opts = append(opts, template.WithWrapper(wrapper))
 	}
-	renderer := template.NewMiyaRender(job.GetReport(), opts...)
+	renderer := template.NewMiyaRender(work, opts...)
 
 	// Render template
 	if _, err := renderer.Render(data); err != nil {

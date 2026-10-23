@@ -1,6 +1,12 @@
 package processor
 
 import (
+	"bytes"
+	"encoding/base64"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net/mail"
 	"strings"
 	"testing"
 
@@ -241,5 +247,298 @@ func TestParseMIMEMessage(t *testing.T) {
 	}
 	if msg.Header.Get("From") != "sender@example.com" {
 		t.Errorf("From = %q, want %q", msg.Header.Get("From"), "sender@example.com")
+	}
+}
+
+// mimeParts parses a generated message. It returns the decoded HTML part under key "html"
+// and each other part under its Content-ID header value exactly as written (e.g. "<resource0@zipreport>").
+func mimeParts(t *testing.T, data []byte) map[string][]byte {
+	t.Helper()
+	msg, err := mail.ReadMessage(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	_, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil {
+		t.Fatalf("ParseMediaType: %v", err)
+	}
+	mr := multipart.NewReader(msg.Body, params["boundary"])
+	parts := make(map[string][]byte)
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("NextPart: %v", err)
+		}
+		raw, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(raw), "\r\n", ""))
+		if err != nil {
+			t.Fatalf("base64 decode: %v", err)
+		}
+		key := part.Header.Get("Content-ID")
+		if key == "" {
+			key = "html"
+		}
+		parts[key] = decoded
+	}
+	return parts
+}
+
+// newTestReport builds a ZipFs-backed report from files and a manifest.
+func newTestReport(files map[string]string, m *report.Manifest) *report.ReportFile {
+	zfs := fileutils.NewZipFs()
+	for name, content := range files {
+		_ = zfs.Add(name, []byte(content), false)
+	}
+	return report.NewReportFile(zfs, m)
+}
+
+func processMIME(r *report.ReportFile, opts ...MIMEOption) *report.JobResult {
+	return NewMIMEProcessor(opts...).Process(report.NewReportJob(r))
+}
+
+func parsedHeader(t *testing.T, data []byte, key string) string {
+	t.Helper()
+	msg, err := mail.ReadMessage(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	return msg.Header.Get(key)
+}
+
+func TestMIMEProcessor_Base64LinesWrapped(t *testing.T) {
+	r := createTestReport()
+	big := bytes.Repeat([]byte{0xAB}, 3000)
+	if err := r.Add("image.png", big, true); err != nil {
+		t.Fatal(err)
+	}
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	for _, line := range strings.Split(string(result.Report), "\r\n") {
+		if len(line) > 76 {
+			t.Fatalf("line longer than 76 characters: %d", len(line))
+		}
+	}
+	if got := mimeParts(t, result.Report)["<resource0@zipreport>"]; !bytes.Equal(got, big) {
+		t.Errorf("image part does not round-trip: got %d bytes", len(got))
+	}
+}
+
+func TestMIMEProcessor_NonASCIISubjectEncoded(t *testing.T) {
+	result := processMIME(createTestReport(), WithSubject("Relatório mensal"))
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	if !strings.Contains(string(result.Report), "Subject: =?utf-8?q?") {
+		t.Error("subject should be RFC 2047 encoded")
+	}
+	got, err := new(mime.WordDecoder).DecodeHeader(parsedHeader(t, result.Report, "Subject"))
+	if err != nil || got != "Relatório mensal" {
+		t.Errorf("decoded subject = %q, %v", got, err)
+	}
+}
+
+func TestMIMEProcessor_DefaultSubjectNonASCIITitle(t *testing.T) {
+	r := newTestReport(map[string]string{"report.html": "<p>x</p>"}, &report.Manifest{Title: "Relatório"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	if !strings.Contains(string(result.Report), "Subject: =?utf-8?q?") {
+		t.Error("default subject should be RFC 2047 encoded")
+	}
+	got, err := new(mime.WordDecoder).DecodeHeader(parsedHeader(t, result.Report, "Subject"))
+	if err != nil || got != "Relatório" {
+		t.Errorf("decoded subject = %q, %v", got, err)
+	}
+}
+
+func TestMIMEProcessor_LongSubjectFolded(t *testing.T) {
+	title := strings.Repeat("ó", 600)
+	r := newTestReport(map[string]string{"report.html": "<p>x</p>"}, &report.Manifest{Title: title})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	if !strings.Contains(string(result.Report), "Subject: =?utf-8?q?") {
+		t.Error("subject should be RFC 2047 encoded")
+	}
+	for _, line := range strings.Split(string(result.Report), "\r\n") {
+		if len(line) > 998 {
+			t.Fatalf("line longer than 998 characters: %d", len(line))
+		}
+	}
+	got, err := new(mime.WordDecoder).DecodeHeader(parsedHeader(t, result.Report, "Subject"))
+	if err != nil || got != title {
+		t.Errorf("decoded subject mismatch: %v", err)
+	}
+}
+
+func TestMIMEProcessor_RejectsControlCharsInCallerHeaders(t *testing.T) {
+	tests := []struct {
+		name string
+		opt  MIMEOption
+	}{
+		{"subject", WithSubject("Hi\r\nBcc: x@evil.test")},
+		{"from", WithFrom("a@b.c\nBcc: x@evil.test")},
+		{"to", WithTo("ok@b.c", "x@b.c\r\nBcc: y@evil.test")},
+		{"nul", WithFrom("a@b.c\x00")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := processMIME(createTestReport(), tt.opt)
+			if result.Success {
+				t.Fatal("expected failure")
+			}
+			if !strings.Contains(result.Error, "control character") {
+				t.Errorf("unexpected error: %s", result.Error)
+			}
+		})
+	}
+	t.Run("tab allowed", func(t *testing.T) {
+		result := processMIME(createTestReport(), WithSubject("a\tb"))
+		if !result.Success {
+			t.Errorf("tab should be allowed: %s", result.Error)
+		}
+	})
+}
+
+func TestMIMEProcessor_TitleLineBreaksCollapsed(t *testing.T) {
+	r := newTestReport(map[string]string{"report.html": "<p>x</p>"}, &report.Manifest{Title: "Monthly\nReport"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	if !strings.Contains(string(result.Report), "Subject: Monthly Report") {
+		t.Error("title line break should be collapsed to a space")
+	}
+}
+
+func TestMIMEProcessor_TrailingNewlineInAddressTrimmed(t *testing.T) {
+	result := processMIME(createTestReport(), WithTo("a@b.c\n"))
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	if !strings.Contains(string(result.Report), "To: a@b.c\r\n") {
+		t.Error("trailing newline should be trimmed from address")
+	}
+}
+
+func TestMIMEProcessor_AnchorsAndSchemesUntouched(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"report.html": `<a href="mailto:a@b.c">m</a><a href="tel:+351">t</a><a href="page2.html">p</a><a href="data.json">d</a><img src="image.png">`,
+		"page2.html":  "<p>2</p>",
+		"data.json":   "{}",
+		"image.png":   "PNG",
+	}, &report.Manifest{Title: "T"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	parts := mimeParts(t, result.Report)
+	html := string(parts["html"])
+	for _, want := range []string{`href="mailto:a@b.c"`, `href="tel:+351"`, `href="page2.html"`, `href="data.json"`, `src="cid:resource0@zipreport"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML should contain %s, got %s", want, html)
+		}
+	}
+	if len(parts) != 2 {
+		t.Errorf("expected 2 parts, got %d", len(parts))
+	}
+}
+
+func TestMIMEProcessor_SameFileEmbeddedOnce(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"report.html": `<img src="image.png"><img src="./image.png"><img src="/image.png">`,
+		"image.png":   "PNG",
+	}, &report.Manifest{Title: "T"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	parts := mimeParts(t, result.Report)
+	if len(parts) != 2 {
+		t.Errorf("expected 2 parts, got %d", len(parts))
+	}
+	if n := strings.Count(string(parts["html"]), `src="cid:resource0@zipreport"`); n != 3 {
+		t.Errorf("expected 3 cid references, got %d in %s", n, parts["html"])
+	}
+}
+
+func TestMIMEProcessor_ResolvesRelativeToReportFile(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"sub/out.html":  `<img src="img/a.png">`,
+		"sub/img/a.png": "RIGHT",
+		"img/a.png":     "WRONG",
+	}, &report.Manifest{Title: "T", Report: "sub/out.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	if got := string(mimeParts(t, result.Report)["<resource0@zipreport>"]); got != "RIGHT" {
+		t.Errorf("image content = %q, want RIGHT", got)
+	}
+}
+
+func TestMIMEProcessor_UsesManifestReportFilename(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"out.html":    "<p>NEW</p>",
+		"report.html": "<p>STALE</p>",
+	}, &report.Manifest{Title: "T", Report: "out.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	html := string(mimeParts(t, result.Report)["html"])
+	if !strings.Contains(html, "NEW") || strings.Contains(html, "STALE") {
+		t.Errorf("unexpected HTML: %s", html)
+	}
+}
+
+func TestExtractResources_OnlyEmbeddable(t *testing.T) {
+	html := `<a href="page.html"><a href="mailto:x@y"><link rel="stylesheet" href="s.css"><link rel="canonical" href="report.html"><img src="x.png"><script src="javascript:void(0)">`
+	got := extractResources(html)
+	want := map[string]bool{"x.png": true, "s.css": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected resource %q", g)
+		}
+	}
+}
+
+func TestMIMEProcessor_AnchorToEmbeddedImageUntouched(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"report.html": `<a href="image.png"><img src="image.png"></a><p title='image.png'>image.png</p>`,
+		"image.png":   "PNG",
+	}, &report.Manifest{Title: "T"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	html := string(mimeParts(t, result.Report)["html"])
+	for _, want := range []string{`<a href="image.png">`, `src="cid:resource0@zipreport"`, `title='image.png'`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML should contain %s, got %s", want, html)
+		}
+	}
+}
+
+func TestMIMEProcessor_OverlongASCIISubjectRejected(t *testing.T) {
+	result := processMIME(createTestReport(), WithSubject(strings.Repeat("a", 1200)))
+	if result.Success || !strings.Contains(result.Error, "subject too long") {
+		t.Errorf("expected subject too long error, got success=%v err=%q", result.Success, result.Error)
+	}
+	if result := processMIME(createTestReport(), WithSubject(strings.Repeat("a", 900))); !result.Success {
+		t.Errorf("900 char subject should succeed: %s", result.Error)
 	}
 }

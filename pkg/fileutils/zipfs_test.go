@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -471,6 +473,9 @@ func TestZipFs_Clone_Independent(t *testing.T) {
 
 func TestZipFs_SaveDeterministic(t *testing.T) {
 	names := []string{"z.txt", "a/b.txt", "m/n/o.txt", "c.txt"}
+	for i := 0; i < 26; i++ {
+		names = append(names, fmt.Sprintf("%c/x.txt", 'a'+i))
+	}
 	a := NewZipFs()
 	for _, n := range names {
 		if err := a.Add(n, []byte("content "+n), false); err != nil {
@@ -503,7 +508,23 @@ func TestZipFs_SaveDeterministic(t *testing.T) {
 	for _, f := range r.File {
 		got = append(got, f.Name)
 	}
-	want := []string{"a/", "m/", "m/n/", "a/b.txt", "c.txt", "m/n/o.txt", "z.txt"}
+	dirSet := map[string]bool{}
+	for _, n := range names {
+		for d := path.Dir(n); d != "."; d = path.Dir(d) {
+			dirSet[d] = true
+		}
+	}
+	var want, files []string
+	for d := range dirSet {
+		want = append(want, d)
+	}
+	sort.Strings(want)
+	for i := range want {
+		want[i] += "/"
+	}
+	files = append(files, names...)
+	sort.Strings(files)
+	want = append(want, files...)
 	if !slices.Equal(got, want) {
 		t.Errorf("entry order = %v, want %v", got, want)
 	}

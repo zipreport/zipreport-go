@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -274,5 +275,32 @@ func TestDiskFs_SymlinkedBaseAllowed(t *testing.T) {
 	}
 	if err := dfs.Add("out.html", []byte("o"), true); err != nil {
 		t.Errorf("Add: %v", err)
+	}
+}
+
+func TestDiskFs_Snapshot_DepthLimit(t *testing.T) {
+	chain := func(n int) string {
+		root := t.TempDir()
+		p := root
+		for i := 0; i < n; i++ {
+			p = filepath.Join(p, "d")
+		}
+		writeTestFile(t, filepath.Join(p, "f.txt"), "x")
+		return root
+	}
+
+	deep := chain(40)
+	dfs, err := NewDiskFs(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dfs.Snapshot(); err == nil || !strings.Contains(err.Error(), "deeper than 32") {
+		t.Errorf("40 levels: err = %v, want 'deeper than 32'", err)
+	}
+
+	ok := chain(30)
+	zfs := snapshotOf(t, ok)
+	if !zfs.Exists(strings.Repeat("d/", 30) + "f.txt") {
+		t.Error("30-level file missing from snapshot")
 	}
 }

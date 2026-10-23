@@ -575,6 +575,17 @@ func TestReportJob_WithReport(t *testing.T) {
 	}
 }
 
+func TestReportJob_WithReport_CopiesMargins(t *testing.T) {
+	job := NewReportJob(createTestReportFile())
+	job.SetCustomMargins(&Margins{Top: 5})
+	c := job.WithReport(createTestReportFile())
+
+	c.customMargins.Top = 9
+	if job.customMargins.Top != 5 {
+		t.Errorf("original margins aliased: Top = %v", job.customMargins.Top)
+	}
+}
+
 func TestBuildFromReportFile_UnreadableIndexFails(t *testing.T) {
 	skipOnWindows(t)
 	if os.Geteuid() == 0 {

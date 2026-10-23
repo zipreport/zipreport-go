@@ -184,3 +184,41 @@ func TestDebugHandler_HiddenFileNotServed(t *testing.T) {
 		}
 	}
 }
+
+func TestRunDebug_UsesHardenedServer(t *testing.T) {
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+
+	var got *http.Server
+	orig := serveDebug
+	serveDebug = func(s *http.Server) error { got = s; return nil }
+	oldHost, oldPort := debugHost, debugPort
+	debugHost, debugPort = "127.0.0.1", 8000
+	t.Cleanup(func() { serveDebug = orig; debugHost, debugPort = oldHost, oldPort })
+
+	if _, err := captureStdout(t, func() error { return runDebug(debugCmd, []string{dir}) }); err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("serveDebug not called")
+	}
+	if got.Addr != "127.0.0.1:8000" {
+		t.Errorf("Addr = %q", got.Addr)
+	}
+	if got.ReadHeaderTimeout <= 0 {
+		t.Error("ReadHeaderTimeout not set")
+	}
+	serve := func(host string) int {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		got.Handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if c := serve("evil.example:8000"); c != 403 {
+		t.Errorf("foreign host status = %d, want 403", c)
+	}
+	if c := serve("localhost:8000"); c != 200 {
+		t.Errorf("localhost status = %d, want 200", c)
+	}
+}

@@ -212,3 +212,26 @@ func TestCLI_Binary_ExitCodes(t *testing.T) {
 		t.Errorf("unexpected version output: %q", vout)
 	}
 }
+
+func TestRunBuild_SymlinkedIndexFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on Windows")
+	}
+	src := t.TempDir()
+	writeCLITemplate(t, src)
+	if err := os.Rename(filepath.Join(src, "index.html"), filepath.Join(src, "real_index.html")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real_index.html", filepath.Join(src, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "r.zpt")
+
+	_, err := captureStdout(t, func() error { return runBuild(buildCmd, []string{src, out}) })
+	if err == nil || !strings.Contains(err.Error(), "index.html") {
+		t.Fatalf("err = %v, want mention of index.html", err)
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Error("output file was created")
+	}
+}

@@ -499,3 +499,18 @@ func TestBuildZipFs_SymlinkInsideWithFollowIncluded(t *testing.T) {
 		t.Errorf("alias.css = %q, %v", got, err)
 	}
 }
+
+func TestBuildZipFs_SymlinkedDirInsideWithFollowFails(t *testing.T) {
+	skipOnWindows(t)
+	dir := createValidReportDir(t)
+	if err := os.Symlink("assets", filepath.Join(dir, "assets2")); err != nil {
+		t.Fatal(err)
+	}
+	_, result := BuildZipFs(dir, &BuildOptions{FollowSymlinks: true, ExcludeHidden: true})
+	if result.Success() {
+		t.Fatal("expected failure")
+	}
+	if !strings.Contains(result.Error(), "symlinked directories are not supported") {
+		t.Errorf("unexpected error: %s", result.Error())
+	}
+}

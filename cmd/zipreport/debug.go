@@ -42,6 +42,11 @@ func init() {
 	debugCmd.Flags().IntVarP(&debugPort, "port", "p", 8000, "Port to listen on")
 }
 
+// serveDebug starts the server; tests replace it to inspect the configured server.
+var serveDebug = func(srv *http.Server) error {
+	return srv.ListenAndServe()
+}
+
 func runDebug(cmd *cobra.Command, args []string) error {
 	source := args[0]
 
@@ -60,7 +65,7 @@ func runDebug(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Serving template from: %s\n", source)
 	fmt.Println("Press Ctrl+C to stop")
 
-	return srv.ListenAndServe()
+	return serveDebug(srv)
 }
 
 // newDebugServer creates the debug HTTP server for a template source.

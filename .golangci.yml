@@ -1,0 +1,7 @@
+version: "2"
+
+linters:
+  exclusions:
+    presets:
+      # Same unchecked-Close/Remove exclusions golangci-lint v1 applied by default
+      - std-error-handling

@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// defaultTimeout is the HTTP client timeout used when WithTimeout is not given.
+const defaultTimeout = 5 * time.Minute
+
 // ServerBackend renders PDFs via zipreport-server HTTP API.
 type ServerBackend struct {
 	url        string
@@ -17,6 +20,8 @@ type ServerBackend struct {
 	apiVersion int
 	httpClient *http.Client
 	secureSSL  bool
+	timeout    time.Duration
+	timeoutSet bool
 }
 
 // ServerOption configures a ServerBackend.
@@ -29,33 +34,27 @@ func WithAPIVersion(version int) ServerOption {
 	}
 }
 
-// WithHTTPClient sets a custom HTTP client.
+// WithHTTPClient sets a custom HTTP client. The client is used as given:
+// WithSecureSSL has no effect on it, and WithTimeout applies to a copy.
 func WithHTTPClient(client *http.Client) ServerOption {
 	return func(b *ServerBackend) {
 		b.httpClient = client
 	}
 }
 
-// WithSecureSSL enables strict SSL certificate validation.
+// WithSecureSSL controls TLS certificate verification. Verification is
+// skipped by default; pass true to enable it.
 func WithSecureSSL(secure bool) ServerOption {
 	return func(b *ServerBackend) {
 		b.secureSSL = secure
-		if !secure {
-			// Create a client that skips certificate verification
-			b.httpClient = &http.Client{
-				Timeout: 5 * time.Minute,
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-				},
-			}
-		}
 	}
 }
 
 // WithTimeout sets the HTTP client timeout.
 func WithTimeout(timeout time.Duration) ServerOption {
 	return func(b *ServerBackend) {
-		b.httpClient.Timeout = timeout
+		b.timeout = timeout
+		b.timeoutSet = true
 	}
 }
 
@@ -65,24 +64,31 @@ func NewServerBackend(url, apiKey string, opts ...ServerOption) *ServerBackend {
 		url:        url,
 		apiKey:     apiKey,
 		apiVersion: 2,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
-		secureSSL: false,
-	}
-
-	// Default to insecure SSL (matching Python behavior)
-	b.httpClient = &http.Client{
-		Timeout: 5 * time.Minute,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
+		secureSSL:  false, // matching Python behavior
+		timeout:    defaultTimeout,
 	}
 
 	for _, opt := range opts {
 		opt(b)
 	}
 
+	if b.httpClient != nil {
+		if b.timeoutSet {
+			// Copy so the caller's client is not modified
+			c := *b.httpClient
+			c.Timeout = b.timeout
+			b.httpClient = &c
+		}
+		return b
+	}
+
+	// Always set TLSClientConfig: a non-nil value keeps both modes on HTTP/1.1, as before
+	b.httpClient = &http.Client{
+		Timeout: b.timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: !b.secureSSL},
+		},
+	}
 	return b
 }
 

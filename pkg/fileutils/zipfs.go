@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"path"
@@ -17,6 +18,10 @@ var (
 	ErrNotADirectory = errors.New("not a directory")
 	ErrNotAFile      = errors.New("not a file")
 	ErrInvalidPath   = errors.New("invalid path")
+	// ErrOutsideFolder is returned when a path resolves, through a symlink, outside a DiskFs folder.
+	ErrOutsideFolder = fmt.Errorf("%w: resolves outside the folder", ErrInvalidPath)
+	// ErrUnportableName is returned for names a package must not contain ("..", drive letters, rooted backslashes).
+	ErrUnportableName = fmt.Errorf("%w: not a portable file name", ErrInvalidPath)
 	// ErrZipTooLarge is returned when a ZIP exceeds MaxUncompressedSize.
 	ErrZipTooLarge = errors.New("zip content exceeds size limit")
 )
@@ -48,7 +53,10 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 	remaining := limit
 	for _, f := range files {
 		name := normalizePath(f.Name)
-		if isEscaping(name) || (!f.FileInfo().IsDir() && name == ".") {
+		if IsUnportableName(name) {
+			return ErrUnportableName
+		}
+		if !f.FileInfo().IsDir() && name == "." {
 			return ErrInvalidPath
 		}
 		if f.FileInfo().IsDir() {
@@ -167,8 +175,11 @@ func (zfs *ZipFs) GetBytes(name string) ([]byte, error) {
 // Add adds or updates a file in the ZIP.
 func (zfs *ZipFs) Add(name string, content []byte, overwrite bool) error {
 	name = normalizePath(name)
-	if name == "" || name == "." || isEscaping(name) {
+	if name == "" || name == "." {
 		return ErrInvalidPath
+	}
+	if IsUnportableName(name) {
+		return ErrUnportableName
 	}
 
 	_, exists := zfs.files[name]
@@ -197,8 +208,8 @@ func (zfs *ZipFs) Mkdir(name string) error {
 	if name == "" {
 		return nil
 	}
-	if isEscaping(name) {
-		return ErrInvalidPath
+	if IsUnportableName(name) {
+		return ErrUnportableName
 	}
 	zfs.cache.Add(name, true)
 	return nil
@@ -351,10 +362,11 @@ func writeFile(filename string, data []byte) error {
 	return writeFileImpl(filename, data)
 }
 
-// isEscaping reports whether a normalized path leaves the root: a ".." segment
-// (split on "/" or "\\", since archive consumers on Windows treat both as separators)
-// or a drive-letter prefix such as "C:".
-func isEscaping(name string) bool {
+// IsUnportableName reports whether name would leave the root of a package: a ".." segment (split on "/" or "\"), a drive-letter prefix, or a leading backslash.
+func IsUnportableName(name string) bool {
+	if strings.HasPrefix(name, "\\") {
+		return true
+	}
 	for _, seg := range strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' }) {
 		if seg == ".." {
 			return true

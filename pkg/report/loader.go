@@ -92,12 +92,12 @@ func LoadDir(dirPath string) (*ReportFile, error) {
 	}
 
 	// Validate required files
-	if !dfs.Exists(FileManifest) {
-		return nil, ErrManifestNotFound
+	if err := requireFile(dfs, FileManifest, ErrManifestNotFound); err != nil {
+		return nil, err
 	}
 
-	if !dfs.Exists(FileIndex) {
-		return nil, ErrIndexNotFound
+	if err := requireFile(dfs, FileIndex, ErrIndexNotFound); err != nil {
+		return nil, err
 	}
 
 	// Parse manifest
@@ -134,6 +134,7 @@ func parseManifest(data []byte) (*Manifest, error) {
 	if manifest.Description == "" {
 		return nil, fmt.Errorf("%w: description", ErrMissingField)
 	}
+	manifest.Report = strings.TrimLeft(manifest.Report, "/")
 	if manifest.Report != "" && !isLocalPath(manifest.Report) {
 		return nil, fmt.Errorf("%w: report must be a relative path inside the report: %q", ErrInvalidManifest, manifest.Report)
 	}
@@ -152,5 +153,16 @@ func ValidateManifest(data []byte) error {
 
 // isLocalPath reports whether p is a slash-separated relative path to a file inside the report.
 func isLocalPath(p string) bool {
-	return !strings.Contains(p, `\`) && path.Clean(p) != "." && filepath.IsLocal(filepath.FromSlash(p))
+	return !strings.Contains(p, `\`) && !fileutils.IsUnportableName(p) && path.Clean(p) != "." && filepath.IsLocal(filepath.FromSlash(p))
+}
+
+// requireFile reports a missing required file, naming a symlink that leaves the folder.
+func requireFile(dfs *fileutils.DiskFs, name string, notFound error) error {
+	if dfs.Exists(name) {
+		return nil
+	}
+	if _, err := dfs.GetBytes(name); errors.Is(err, fileutils.ErrOutsideFolder) {
+		return fmt.Errorf("%s is a symlink outside the template folder: %w", name, err)
+	}
+	return notFound
 }

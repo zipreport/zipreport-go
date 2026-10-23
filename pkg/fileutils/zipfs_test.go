@@ -623,10 +623,14 @@ func TestNewZipFsFromBytes_NonPositiveLimitUsesDefault(t *testing.T) {
 }
 
 func TestZipFs_Add_RejectsEscapingNames(t *testing.T) {
-	for _, name := range []string{"../x", "..", "a/../../x", `..\x`, `a\..\..\x`, "C:/x", "", "."} {
+	for _, name := range []string{"../x", "..", "a/../../x", `..\x`, `a\..\..\x`, "C:/x", `\evil.txt`, `\\srv\share\x`, "", "."} {
 		z := NewZipFs()
-		if err := z.Add(name, []byte("x"), true); !errors.Is(err, ErrInvalidPath) {
+		err := z.Add(name, []byte("x"), true)
+		if !errors.Is(err, ErrInvalidPath) {
 			t.Errorf("Add(%q) err = %v, want ErrInvalidPath", name, err)
+		}
+		if name != "" && name != "." && !errors.Is(err, ErrUnportableName) {
+			t.Errorf("Add(%q) err = %v, want ErrUnportableName", name, err)
 		}
 		if len(z.Files()) != 0 {
 			t.Errorf("Add(%q) stored %v", name, z.Files())
@@ -648,7 +652,7 @@ func TestZipFs_Add_RejectsEscapingNames(t *testing.T) {
 }
 
 func TestNewZipFsFromBytes_RejectsEscapingEntries(t *testing.T) {
-	for _, evil := range []string{"../evil.txt", `..\evil.txt`, "a/.."} {
+	for _, evil := range []string{"../evil.txt", `..\evil.txt`, `\evil.txt`, "a/.."} {
 		buf := &bytes.Buffer{}
 		w := zip.NewWriter(buf)
 		for _, n := range []string{"index.html", evil} {

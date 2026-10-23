@@ -546,8 +546,9 @@ func TestMIMEProcessor_OverlongASCIISubjectRejected(t *testing.T) {
 
 func TestMIMEProcessor_HiddenFileNotEmbedded(t *testing.T) {
 	r := newTestReport(map[string]string{
-		"report.html": `<img src=".env"><img src="image.png">`,
+		"report.html": `<img src=".env"><img src="sub/.env"><img src="image.png">`,
 		".env":        "SECRET",
+		"sub/.env":    "SECRET2",
 		"image.png":   "PNG",
 	}, &report.Manifest{Title: "T"})
 	result := processMIME(r)
@@ -559,7 +560,7 @@ func TestMIMEProcessor_HiddenFileNotEmbedded(t *testing.T) {
 		t.Errorf("expected 2 parts, got %d", len(parts))
 	}
 	for k, v := range parts {
-		if strings.Contains(string(v), "SECRET") {
+		if strings.Contains(string(v), "SECRET") || strings.Contains(string(v), "SECRET2") {
 			t.Errorf("part %s contains hidden file content", k)
 		}
 	}

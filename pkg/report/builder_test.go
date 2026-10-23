@@ -514,3 +514,18 @@ func TestBuildZipFs_SymlinkedDirInsideWithFollowFails(t *testing.T) {
 		t.Errorf("unexpected error: %s", result.Error())
 	}
 }
+
+func TestBuildZipFs_UnportableNameFails(t *testing.T) {
+	dir := createValidReportDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "a:b.css"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, result := BuildZipFs(dir, nil)
+	if result.Success() {
+		t.Fatal("BuildZipFs should fail for an unportable name")
+	}
+	msg := result.Error()
+	if !strings.Contains(msg, "a:b.css") || !strings.Contains(msg, "not a portable file name") {
+		t.Errorf("error = %q, want file name and reason", msg)
+	}
+}

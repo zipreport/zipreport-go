@@ -7,6 +7,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
@@ -317,19 +319,53 @@ func TestParseManifest_ReportMustBeLocal(t *testing.T) {
 		b, _ := json.Marshal(m)
 		return b
 	}
-	for _, r := range []string{"../x.html", "/abs.html", "a/../../x.html", `..\x.html`, "..", ".", "a/.."} {
+	for _, r := range []string{"../x.html", "x:out.html", "a/../../x.html", `..\x.html`, "..", ".", "a/.."} {
 		r := r
 		if _, err := parseManifest(build(&r)); !errors.Is(err, ErrInvalidManifest) {
 			t.Errorf("report %q: err = %v, want ErrInvalidManifest", r, err)
 		}
 	}
-	for _, r := range []string{"out.html", "sub/out.html"} {
+	for _, r := range []string{"out.html", "sub/out.html", "/report.html"} {
 		r := r
-		if _, err := parseManifest(build(&r)); err != nil {
+		m, err := parseManifest(build(&r))
+		if err != nil {
 			t.Errorf("report %q: unexpected error %v", r, err)
+			continue
+		}
+		if want := strings.TrimLeft(r, "/"); m.Report != want {
+			t.Errorf("report %q: got %q, want %q", r, m.Report, want)
 		}
 	}
 	if _, err := parseManifest(build(nil)); err != nil {
 		t.Errorf("absent report: unexpected error %v", err)
+	}
+}
+
+func TestLoadDir_ManifestSymlinkOutsideNamed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	src := createValidReportDir(t)
+	outside := t.TempDir()
+	data, err := os.ReadFile(filepath.Join(src, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "manifest.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "manifest.json"), filepath.Join(dir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadDir(dir)
+	if err == nil || !strings.Contains(err.Error(), "symlink outside the template folder") {
+		t.Fatalf("LoadDir err = %v, want symlink outside the template folder", err)
+	}
+	if !errors.Is(err, fileutils.ErrOutsideFolder) {
+		t.Errorf("err = %v, want ErrOutsideFolder", err)
 	}
 }

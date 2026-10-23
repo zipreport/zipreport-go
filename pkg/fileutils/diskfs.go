@@ -89,7 +89,7 @@ func (dfs *DiskFs) checkResolved(absPath string) error {
 		resolved, err := filepath.EvalSymlinks(p)
 		if err == nil {
 			if resolved != base && !strings.HasPrefix(resolved, prefix) {
-				return ErrInvalidPath
+				return ErrOutsideFolder
 			}
 			return nil
 		}
@@ -97,7 +97,7 @@ func (dfs *DiskFs) checkResolved(absPath string) error {
 			return err
 		}
 		if info, lerr := os.Lstat(p); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
-			return ErrInvalidPath
+			return ErrOutsideFolder
 		}
 		parent := filepath.Dir(p)
 		if parent == p {
@@ -358,8 +358,8 @@ func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, d
 				return fmt.Errorf("failed to read %s: %w", relName, err)
 			}
 			if err := zfs.Add(relName, content, true); err != nil {
-				if errors.Is(err, ErrInvalidPath) {
-					continue // a name ZipFs refuses (e.g. "a:b.css"); packages must stay portable
+				if errors.Is(err, ErrUnportableName) {
+					return fmt.Errorf("%s: %w (rename it)", relName, err)
 				}
 				return err
 			}

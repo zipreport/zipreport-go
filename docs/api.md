@@ -104,11 +104,11 @@ Filters added through an `EnvironmentWrapper` that write files into a `ReportFil
 
 `Save()` and every render ship the report's own `manifest.json`, so changes made through `GetManifest()` are not sent; the in-memory manifest is only used when the report has no `manifest.json`.
 
-`Save()` on a folder-loaded report packages every readable, non-hidden file in the folder. It skips root-level `_gen_*` files left by older versions, and it fails if `index.html` is missing or the folder is nested deeper than 32 levels. Large folders are read and sent on every render.
+`Save()` on a folder-loaded report packages every readable, non-hidden file in the folder (unreadable files and broken symlinks are skipped). A file name that is not portable inside a ZIP (a ".." segment, a drive-letter prefix such as "a:", or a leading backslash) fails Save() with fileutils.ErrUnportableName. It skips root-level `_gen_*` files left by older versions, and it fails if `index.html` is missing or the folder is nested deeper than 32 levels. Large folders are read and sent on every render.
 
 A `data.json` in the report supplies default data. It must contain a JSON object (empty files and `null` are treated as no data; a UTF-8 byte-order mark is allowed); anything else makes every render fail with `invalid data.json`.
 
-Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such files are treated as absent. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report.
+Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such paths fail with fileutils.ErrOutsideFolder (`LoadDir` names the file); includes and assets that resolve outside are not found. A broken symlink is rejected even if it points inside the folder. Containment is checked on each access; see the os.Root note in the plans for the remaining check-then-open race. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report. A leading "/" in manifest.json's report is ignored.
 
 ### ReportFile
 
@@ -360,7 +360,7 @@ o.Add("report.html", html, true)    // base is untouched
 content, err := o.GetBytes("index.html") // read from base
 ```
 
-`DiskFs.Snapshot()` copies a folder into a new `ZipFs` (hidden entries, special files and symlinks leaving the folder are skipped).
+`DiskFs.Snapshot()` copies a folder into a new `ZipFs` (hidden entries, root-level `_gen_*` files, special files, broken symlinks, unreadable files and symlinks leaving the folder are skipped; unportable names fail).
 
 ## Complete Example
 

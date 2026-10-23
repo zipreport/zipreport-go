@@ -21,7 +21,7 @@ zipreport build <source_dir> <output.zpt>
 
 - `-s, --symlinks` - Follow symlinks when building (symlinks must resolve inside the template folder; symlinked folders are not supported)
 
-Builds fail when any file cannot be read, when a symlink is broken (with `-s`), when a symlinked folder is used (with `-s`), or when `index.html`/`manifest.json` is a symlink (without `-s`). Otherwise, without `-s`, symlinks are skipped.
+Builds fail when any file cannot be read, when a symlink is broken (with `-s`), when a symlinked folder is used (with `-s`), or when `index.html`/`manifest.json` is a symlink (without `-s`), when a symlink points outside the template folder (with `-s`), or when a file name is not portable (e.g. "a:b.css"). Otherwise, without `-s`, symlinks are skipped.
 
 **Examples:**
 

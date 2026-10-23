@@ -182,17 +182,24 @@ func TestDiskFs_Snapshot_UnreadableSkipped(t *testing.T) {
 	}
 }
 
-func TestDiskFs_Snapshot_UnportableNamesSkipped(t *testing.T) {
+func TestDiskFs_Snapshot_UnportableNameFails(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "index.html"), "x")
 	writeTestFile(t, filepath.Join(dir, "a:b.css"), "x")
-	writeTestFile(t, filepath.Join(dir, "1:1.png"), "x")
-	zfs := snapshotOf(t, dir)
+	dfs, err := NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dfs.Snapshot(); !errors.Is(err, ErrUnportableName) || !strings.Contains(err.Error(), "a:b.css") {
+		t.Errorf("Snapshot() err = %v, want ErrUnportableName naming a:b.css", err)
+	}
+
+	dir2 := t.TempDir()
+	writeTestFile(t, filepath.Join(dir2, "index.html"), "x")
+	writeTestFile(t, filepath.Join(dir2, "1:1.png"), "x")
+	zfs := snapshotOf(t, dir2)
 	if !zfs.Exists("index.html") || !zfs.Exists("1:1.png") {
 		t.Errorf("missing expected files: %v", zfs.Files())
-	}
-	if zfs.Exists("a:b.css") {
-		t.Errorf("a:b.css should be skipped: %v", zfs.Files())
 	}
 }
 
@@ -218,6 +225,9 @@ func TestDiskFs_SymlinkOutsideRejected(t *testing.T) {
 		if _, err := dfs.GetBytes(n); !errors.Is(err, ErrInvalidPath) {
 			t.Errorf("GetBytes(%q) err = %v, want ErrInvalidPath", n, err)
 		}
+	}
+	if _, err := dfs.GetBytes("ext.txt"); !errors.Is(err, ErrOutsideFolder) {
+		t.Errorf("GetBytes(ext.txt) err = %v, want ErrOutsideFolder", err)
 	}
 	if dfs.Exists("ext.txt") {
 		t.Error("Exists(ext.txt) should be false")

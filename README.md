@@ -280,6 +280,10 @@ golangci-lint run
 
 This project is sponsored by [Blackshield](https://blackshield.io).
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 SPDX-License-Identifier: MIT

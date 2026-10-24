@@ -614,3 +614,76 @@ func TestMIMEProcessor_RootRelativeRefFromSubfolder(t *testing.T) {
 		t.Error("no embedded part")
 	}
 }
+
+func TestMIMEProcessor_ResourceFilenameEncoded(t *testing.T) {
+	name := "a.png\r\nX-Injected: yes"
+	r := newTestReport(map[string]string{
+		"report.html": `<img src="` + name + `">`,
+		name:          "PNG",
+	}, &report.Manifest{Title: "T", Report: "report.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	msg, err := mail.ReadMessage(bytes.NewReader(result.Report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr := multipart.NewReader(msg.Body, params["boundary"])
+	embedded := false
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if part.Header.Get("Content-ID") == "" {
+			continue
+		}
+		embedded = true
+		if got := part.Header.Get("X-Injected"); got != "" {
+			t.Errorf("injected header present: %q", got)
+		}
+		_, dp, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+		if err != nil {
+			t.Fatalf("Content-Disposition: %v", err)
+		}
+		if dp["filename"] != name {
+			t.Errorf("filename = %q, want %q", dp["filename"], name)
+		}
+	}
+	if !embedded {
+		t.Fatal("no embedded part found")
+	}
+}
+
+func TestMIMEProcessor_LinkHrefRewritten(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"report.html": `<link rel="stylesheet" href="s.css">`,
+		"s.css":       `body{}`,
+	}, &report.Manifest{Title: "T", Report: "report.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	html := string(mimeParts(t, result.Report)["html"])
+	if !strings.Contains(html, `href="cid:resource0@zipreport"`) || strings.Contains(html, `href="s.css"`) {
+		t.Errorf("link href not rewritten: %s", html)
+	}
+}
+
+func TestMIMEProcessor_SubjectLengthBoundary(t *testing.T) {
+	if result := processMIME(createTestReport(), WithSubject(strings.Repeat("a", 989))); !result.Success {
+		t.Errorf("989-byte subject failed: %s", result.Error)
+	}
+	result := processMIME(createTestReport(), WithSubject(strings.Repeat("a", 990)))
+	if result.Success || !strings.Contains(result.Error, "subject too long") {
+		t.Errorf("expected subject too long, got success=%v err=%q", result.Success, result.Error)
+	}
+}

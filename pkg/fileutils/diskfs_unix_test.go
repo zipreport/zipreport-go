@@ -4,6 +4,7 @@ package fileutils
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -312,5 +313,101 @@ func TestDiskFs_Snapshot_DepthLimit(t *testing.T) {
 	zfs := snapshotOf(t, ok)
 	if !zfs.Exists(strings.Repeat("d/", 30) + "f.txt") {
 		t.Error("30-level file missing from snapshot")
+	}
+}
+
+func TestDiskFs_Snapshot_SymlinkFanOutBounded(t *testing.T) {
+	// Without the budget this walks about 2^17 folders (about 2 s): every level
+	// reaches the next one through two symlinks.
+	root := t.TempDir()
+	for k := 0; k <= 16; k++ {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("d%d", k)), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for k := 0; k < 16; k++ {
+		for _, n := range []string{"a", "b"} {
+			if err := os.Symlink(fmt.Sprintf("../d%d", k+1), filepath.Join(root, fmt.Sprintf("d%d", k), n)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	dfs, err := NewDiskFs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = dfs.Snapshot()
+	if !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+	// The folder budget must trip first; the scan budget is only the backstop for skipped entries.
+	if strings.Contains(err.Error(), "lists more than") {
+		t.Fatalf("scan budget tripped instead of the folder budget: %v", err)
+	}
+}
+
+func TestDiskFs_Snapshot_SkippedEntriesBounded(t *testing.T) {
+	root := t.TempDir()
+	for k := 0; k <= 10; k++ {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("d%d", k)), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for k := 0; k <= 10; k++ {
+		dir := filepath.Join(root, fmt.Sprintf("d%d", k))
+		if k < 10 {
+			for _, n := range []string{"a", "b"} {
+				if err := os.Symlink(fmt.Sprintf("../d%d", k+1), filepath.Join(dir, n)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		for i := 0; i < 200; i++ {
+			if err := os.Symlink("/nonexistent", filepath.Join(dir, fmt.Sprintf("x%03d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	dfs, err := NewDiskFs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = dfs.Snapshot()
+	if !errors.Is(err, ErrZipTooLarge) || !strings.Contains(err.Error(), "lists more than") {
+		t.Fatalf("expected ErrZipTooLarge (lists more than), got %v", err)
+	}
+}
+
+func TestDiskFs_Snapshot_SizeBounded(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	body := strings.Repeat("a", 600)
+
+	big := t.TempDir()
+	writeTestFile(t, filepath.Join(big, "index.html"), "i")
+	writeTestFile(t, filepath.Join(big, "a.txt"), body)
+	writeTestFile(t, filepath.Join(big, "b.txt"), body)
+	dfs, err := NewDiskFs(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dfs.Snapshot(); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+
+	small := t.TempDir()
+	writeTestFile(t, filepath.Join(small, "index.html"), "i")
+	writeTestFile(t, filepath.Join(small, "a.txt"), body)
+	snapshotOf(t, small)
+
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode 0 files are readable")
+	}
+	locked := filepath.Join(small, "locked.bin")
+	writeTestFile(t, locked, strings.Repeat("z", 2000))
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotOf(t, small).Exists("locked.bin") {
+		t.Error("unreadable file was included")
 	}
 }

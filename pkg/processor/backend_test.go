@@ -410,3 +410,46 @@ func TestServerBackend_Render_NonPositiveMaxUsesDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestNewServerBackend_DefaultLimits(t *testing.T) {
+	b := NewServerBackend("http://x", "k")
+	if b.maxResponseSize != 512<<20 {
+		t.Errorf("maxResponseSize = %d, want %d", b.maxResponseSize, int64(512<<20))
+	}
+	if b.httpClient.Timeout != 5*time.Minute {
+		t.Errorf("timeout = %v, want 5m", b.httpClient.Timeout)
+	}
+}
+
+func TestServerBackend_Render_ErrorBodyReadIsBounded(t *testing.T) {
+	const total = 64 << 20
+	var written atomic.Int64
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusInternalServerError)
+		chunk := []byte(strings.Repeat("x", 32<<10))
+		for written.Load() < total {
+			n, err := w.Write(chunk)
+			written.Add(int64(n))
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	_, err := NewServerBackend(srv.URL, "k").Render([]byte("z"), nil)
+	if err == nil || !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("expected status 500 error, got %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	if written.Load() >= total {
+		t.Fatalf("server wrote all %d bytes: error body read is unbounded", written.Load())
+	}
+}

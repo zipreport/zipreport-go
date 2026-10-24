@@ -291,17 +291,36 @@ func (dfs *DiskFs) BasePath() string {
 // maxSnapshotDepth bounds folder nesting in Snapshot.
 const maxSnapshotDepth = 32
 
+// snapshotBudget bounds what Snapshot copies, so symlinks that reach one folder
+// through many paths cannot multiply it.
+type snapshotBudget struct {
+	bytes   int64 // bytes left
+	entries int   // files and folders left
+	scanned int   // directory entries left to examine, skipped ones included
+}
+
+// take charges one entry of n bytes, failing once the budget is spent.
+func (b *snapshotBudget) take(rel string, n int64) error {
+	if b.entries <= 0 || n > b.bytes {
+		return fmt.Errorf("%w: folder exceeds %d files and folders or the size limit at %q", ErrZipTooLarge, maxZipEntries, rel)
+	}
+	b.entries--
+	b.bytes -= n
+	return nil
+}
+
 // Snapshot copies the folder into a new in-memory ZipFs, as sent to a renderer.
 // Hidden entries, root-level _gen_* files (generated images left by older versions),
 // non-regular files (sockets, FIFOs, devices) and broken symlinks are skipped.
 // Symlinks are followed only when they resolve inside the folder.
+// It fails with ErrZipTooLarge past maxZipEntries files and folders (counted once per path) or MaxUncompressedSize bytes.
 func (dfs *DiskFs) Snapshot() (*ZipFs, error) {
 	root, err := filepath.EvalSymlinks(dfs.basePath)
 	if err != nil {
 		return nil, err
 	}
 	zfs := NewZipFs()
-	if err := snapshotDir(zfs, root, root, "", map[string]bool{root: true}, 0); err != nil {
+	if err := snapshotDir(zfs, root, root, "", map[string]bool{root: true}, &snapshotBudget{bytes: zipLimit(), entries: maxZipEntries, scanned: 10 * maxZipEntries}, 0); err != nil {
 		return nil, err
 	}
 	return zfs, nil
@@ -309,7 +328,7 @@ func (dfs *DiskFs) Snapshot() (*ZipFs, error) {
 
 // snapshotDir copies dir (a real path inside root) into zfs under rel.
 // ancestors holds the real paths of the folders being walked, to stop symlink loops.
-func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, depth int) error {
+func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, budget *snapshotBudget, depth int) error {
 	if depth > maxSnapshotDepth {
 		return fmt.Errorf("folder nesting deeper than %d at %q", maxSnapshotDepth, rel)
 	}
@@ -319,6 +338,10 @@ func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, d
 			return nil // unreadable subfolder: skipped, as renders never needed it
 		}
 		return err
+	}
+	budget.scanned -= len(entries)
+	if budget.scanned < 0 {
+		return fmt.Errorf("%w: folder lists more than %d entries at %q", ErrZipTooLarge, 10*maxZipEntries, rel)
 	}
 	prefix := strings.TrimSuffix(root, string(filepath.Separator)) + string(filepath.Separator)
 	for _, entry := range entries {
@@ -343,19 +366,30 @@ func snapshotDir(zfs *ZipFs, root, dir, rel string, ancestors map[string]bool, d
 			if ancestors[real] {
 				continue // symlink loop
 			}
+			if err := budget.take(relName, 0); err != nil {
+				return err
+			}
 			ancestors[real] = true
-			err := snapshotDir(zfs, root, real, relName, ancestors, depth+1)
+			err := snapshotDir(zfs, root, real, relName, ancestors, budget, depth+1)
 			delete(ancestors, real)
 			if err != nil {
 				return err
 			}
 		case info.Mode().IsRegular():
-			content, err := os.ReadFile(real)
+			f, err := os.Open(real)
 			if errors.Is(err, fs.ErrPermission) {
 				continue // unreadable file: skipped; Save checks the required files afterwards
 			}
 			if err != nil {
 				return fmt.Errorf("failed to read %s: %w", relName, err)
+			}
+			content, err := io.ReadAll(io.LimitReader(f, saturatingInc(budget.bytes)))
+			f.Close()
+			if err != nil {
+				return fmt.Errorf("failed to read %s: %w", relName, err)
+			}
+			if err := budget.take(relName, int64(len(content))); err != nil {
+				return err
 			}
 			if err := zfs.Add(relName, content, true); err != nil {
 				if errors.Is(err, ErrUnportableName) {

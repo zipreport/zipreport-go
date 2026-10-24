@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -666,5 +667,46 @@ func TestNewZipFsFromBytes_RejectsEscapingEntries(t *testing.T) {
 		if _, err := NewZipFsFromBytes(buf.Bytes()); !errors.Is(err, ErrInvalidPath) {
 			t.Errorf("entry %q: err = %v, want ErrInvalidPath", evil, err)
 		}
+	}
+}
+
+func TestNewZipFsFromBytes_TooManyEntries(t *testing.T) {
+	files := make(map[string][]byte, maxZipEntries+1)
+	for i := 0; i <= maxZipEntries; i++ {
+		files[fmt.Sprintf("f%05d", i)] = []byte("x")
+	}
+	if _, err := NewZipFsFromBytes(zipWith(t, files)); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+func TestNewZipFsFromBytes_NameLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   string
+		wantErr bool
+	}{
+		{"32 levels", strings.Repeat("a/", 32) + "f", false},
+		{"33 levels", strings.Repeat("a/", 33) + "f", true},
+		{"1024 bytes", strings.Repeat("n", 1024), false},
+		{"1025 bytes", strings.Repeat("n", 1025), true},
+		{"32 level folder entry", strings.Repeat("a/", 32), false},
+		{"33 level folder entry", strings.Repeat("a/", 33), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := []byte("x")
+			if strings.HasSuffix(tt.entry, "/") {
+				content = nil // folder entries carry no content
+			}
+			_, err := NewZipFsFromBytes(zipWith(t, map[string][]byte{tt.entry: content}))
+			if tt.wantErr {
+				if !errors.Is(err, ErrZipTooLarge) {
+					t.Fatalf("expected ErrZipTooLarge, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }

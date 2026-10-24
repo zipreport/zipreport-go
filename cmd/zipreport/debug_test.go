@@ -225,3 +225,24 @@ func TestRunDebug_UsesHardenedServer(t *testing.T) {
 		t.Errorf("localhost status = %d, want 200", c)
 	}
 }
+
+func TestNewDebugServer_GuardOnEveryLoopbackBind(t *testing.T) {
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+	serve := func(s *http.Server, host string) int {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		s.Handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, bind := range []string{"127.0.0.1", "::1", "[::1]", "localhost"} {
+		srv := newDebugServer(bind, 8000, dir)
+		if got := serve(srv, "evil.example:8000"); got != 403 {
+			t.Errorf("bind %q: foreign host status = %d, want 403", bind, got)
+		}
+		if got := serve(srv, "localhost:8000"); got != 200 {
+			t.Errorf("bind %q: localhost status = %d, want 200", bind, got)
+		}
+	}
+}

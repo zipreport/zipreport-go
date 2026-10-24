@@ -22,27 +22,50 @@ var (
 	ErrOutsideFolder = fmt.Errorf("%w: resolves outside the folder", ErrInvalidPath)
 	// ErrUnportableName is returned for names a package must not contain ("..", drive letters, rooted backslashes).
 	ErrUnportableName = fmt.Errorf("%w: not a portable file name", ErrInvalidPath)
-	// ErrZipTooLarge is returned when a ZIP exceeds MaxUncompressedSize.
+	// ErrZipTooLarge is returned when a ZIP or a folder snapshot exceeds MaxUncompressedSize or the entry limits.
 	ErrZipTooLarge = errors.New("zip content exceeds size limit")
 )
 
-// MaxUncompressedSize is the maximum total uncompressed size accepted when loading a ZIP.
+// MaxUncompressedSize is the maximum total uncompressed size accepted when loading a ZIP or snapshotting a folder.
 // Values <= 0 mean the default (512 MiB). It is process-wide: set it once before any
 // load, and never while loads may be running. Concurrent loads can each use up to the limit.
 var MaxUncompressedSize int64 = defaultMaxUncompressedSize
 
 const defaultMaxUncompressedSize int64 = 512 << 20
 
-// loadZipEntries reads all entries into zfs, enforcing MaxUncompressedSize.
+const (
+	// maxZipEntries bounds the files and folders in a loaded ZIP or a folder snapshot.
+	maxZipEntries = 10000
+	// maxZipNameLength bounds an entry name in a loaded ZIP, in bytes.
+	maxZipNameLength = 1024
+)
+
+// zipLimit returns MaxUncompressedSize, or the default when it is <= 0.
+func zipLimit() int64 {
+	if MaxUncompressedSize <= 0 {
+		return defaultMaxUncompressedSize
+	}
+	return MaxUncompressedSize
+}
+
+// loadZipEntries reads all entries into zfs, enforcing MaxUncompressedSize and the entry and name limits.
 func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
-	limit := MaxUncompressedSize
-	if limit <= 0 {
-		limit = defaultMaxUncompressedSize
+	limit := zipLimit()
+
+	if len(files) > maxZipEntries {
+		return fmt.Errorf("%w: more than %d entries", ErrZipTooLarge, maxZipEntries)
 	}
 
 	// Reject on declared sizes first, without decompressing anything
 	var declared uint64
 	for _, f := range files {
+		depth := strings.Count(normalizePath(f.Name), "/") // folders above the entry
+		if f.FileInfo().IsDir() {
+			depth++ // a folder entry is itself one level deeper
+		}
+		if len(f.Name) > maxZipNameLength || depth > maxSnapshotDepth {
+			return fmt.Errorf("%w: entry name too long or nested too deep: %.64q", ErrZipTooLarge, f.Name)
+		}
 		declared += f.UncompressedSize64
 		if declared > uint64(limit) || declared < f.UncompressedSize64 {
 			return ErrZipTooLarge

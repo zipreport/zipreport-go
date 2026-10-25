@@ -42,4 +42,4 @@ ZipReport Go allows you to create professional PDF reports from HTML templates. 
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/zipreport/zipreport-go/blob/main/LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/zipreport/zipreport-go/blob/master/LICENSE) for details.

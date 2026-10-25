@@ -238,7 +238,7 @@ Used for .zpt files and report export.
 
 #### DiskFs
 
-Read-only disk filesystem:
+Disk filesystem confined to its base folder (writable; the API renders through `Clone()` so the folder is not modified):
 
 - `NewDiskFs(basePath)` - Create from directory
 - `BasePath()` - Get base directory

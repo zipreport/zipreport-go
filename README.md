@@ -234,7 +234,7 @@ data := map[string]interface{}{
 
 ```html
 <!-- In template -->
-{{ chart_func | png(data=chart_data, width=400, height=300) }}
+{{ chart_func | png(chart_data, "", 400, 300) }}
 ```
 
 Supported filters: `png`, `gif`, `jpg`, `jpeg`, `svg`

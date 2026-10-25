@@ -30,7 +30,7 @@ go run main.go output.pdf
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - For PDF generation: a running zipreport-server instance
 - For MIME generation: no server required
 

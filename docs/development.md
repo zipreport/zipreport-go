@@ -108,6 +108,8 @@ zipreport-go/
 │   │   ├── zipfs.go        # In-memory ZIP filesystem
 │   │   ├── diskfs.go       # Disk-based filesystem
 │   │   ├── pathcache.go    # Path caching
+│   │   ├── overlayfs.go    # In-memory writes over a read-only base
+│   │   ├── doc.go          # Package documentation
 │   │   └── *_test.go
 │   ├── processor/          # Rendering backends
 │   │   ├── interface.go    # Backend interfaces

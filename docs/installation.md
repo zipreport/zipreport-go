@@ -30,7 +30,7 @@ tar -xzf zipreport_linux_amd64.tar.gz
 sudo mv zipreport /usr/local/bin/
 
 # Verify installation
-zipreport --version
+zipreport version
 ```
 
 #### Windows (PowerShell)
@@ -43,7 +43,7 @@ Expand-Archive zipreport_windows_amd64.zip
 Move-Item zipreport.exe C:\Windows\System32\
 
 # Verify installation
-zipreport --version
+zipreport version
 ```
 
 ### From source
@@ -74,11 +74,11 @@ docker run -p 6543:6543 zipreport/zipreport-server
 
 ### Configuration
 
-Set the server URL via environment variable:
+The examples read the server URL and key from these environment variables (the library itself does not read the environment):
 
 ```bash
 export ZIPREPORT_URL="http://localhost:6543"
-export ZIPREPORT_API_KEY="your-api-key"  # if authentication is enabled
+export ZIPREPORT_KEY="your-api-key"  # if authentication is enabled
 ```
 
 Or configure in code:

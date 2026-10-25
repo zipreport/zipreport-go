@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/zipreport/miya"
 	"github.com/zipreport/zipreport-go/pkg/report"
@@ -54,16 +55,27 @@ func WithWrapper(wrapper EnvironmentWrapper) RenderOption {
 }
 
 // MiyaRender handles template rendering using the miya engine.
+// A MiyaRender renders once: Render, RenderTemplate and RenderString may be called a single time in total; later calls return ErrRendererUsed (if filter registration failed, every call returns that error instead). Configure it with GetEnvironment/SetWrapper before the render.
 type MiyaRender struct {
 	report      *report.ReportFile
 	env         *miya.Environment
 	options     *RenderOptions
 	wrapper     EnvironmentWrapper
 	filterError error
+	used        atomic.Bool
+}
+
+// claim marks the renderer as used; only the first call succeeds.
+func (r *MiyaRender) claim() error {
+	if !r.used.CompareAndSwap(false, true) {
+		return ErrRendererUsed
+	}
+	return nil
 }
 
 // NewMiyaRender creates a new MiyaRender for a report.
 // Rendering writes the output (and any generated images) into r; render r.Clone() to keep r unchanged.
+// Create a new renderer for each render.
 func NewMiyaRender(r *report.ReportFile, opts ...RenderOption) *MiyaRender {
 	options := DefaultRenderOptions()
 
@@ -116,6 +128,9 @@ func (r *MiyaRender) RenderTemplate(templateName string, data map[string]interfa
 	if r.filterError != nil {
 		return "", r.filterError
 	}
+	if err := r.claim(); err != nil {
+		return "", err
+	}
 	// Work on a copy so the caller's map is never modified
 	merged := make(map[string]interface{}, len(data))
 	for k, v := range data {
@@ -153,7 +168,6 @@ func (r *MiyaRender) RenderTemplate(templateName string, data map[string]interfa
 	if err != nil {
 		return "", fmt.Errorf("failed to load template %s: %w", templateName, err)
 	}
-	defer tmpl.Release()
 
 	// Create context from data
 	ctx := miya.NewContextFrom(data)
@@ -221,6 +235,9 @@ func (r *MiyaRender) RenderString(source string, data map[string]interface{}) (s
 	if r.filterError != nil {
 		return "", r.filterError
 	}
+	if err := r.claim(); err != nil {
+		return "", err
+	}
 	// Apply wrapper if present
 	if r.wrapper != nil {
 		r.wrapper.Configure(r.env)
@@ -238,4 +255,5 @@ func (r *MiyaRender) RenderString(source string, data map[string]interface{}) (s
 var (
 	ErrTemplateNotFound = errors.New("template not found")
 	ErrRenderFailed     = errors.New("render failed")
+	ErrRendererUsed     = errors.New("MiyaRender already used; create a new renderer for each render")
 )

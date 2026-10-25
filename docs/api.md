@@ -224,18 +224,20 @@ renderer := template.NewMiyaRender(zpt,
     template.WithWrapper(myWrapper),
 )
 
+// Access environment for advanced configuration (before the render)
+env := template.NewMiyaRender(zpt.Clone()).GetEnvironment()
+
 // Render main template
-output, err := renderer.Render(data)
+output, err := template.NewMiyaRender(zpt.Clone()).Render(data)
 
-// Render specific template
-output, err := renderer.RenderTemplate("other.html", data)
+// Render a specific template
+output, err := template.NewMiyaRender(zpt.Clone()).RenderTemplate("other.html", data)
 
-// Render string directly
-output, err := renderer.RenderString("Hello {{ name }}", data)
-
-// Access environment for advanced configuration
-env := renderer.GetEnvironment()
+// Render a string directly
+output, err := template.NewMiyaRender(zpt.Clone()).RenderString("Hello {{ name }}", data)
 ```
+
+A `MiyaRender` renders once. A second call to `Render`, `RenderTemplate` or `RenderString` returns `template.ErrRendererUsed` (if filter registration failed, every call returns that error instead). Create a new renderer (cheap) for each render, including a retry after an error, and call `GetEnvironment`/`SetWrapper` before the render. This keeps template caches from carrying one render's data into the next.
 
 `Render` writes the output (and any generated images) into the `ReportFile` it was given; pass `zpt.Clone()` to keep `zpt` unchanged.
 

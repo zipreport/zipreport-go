@@ -21,6 +21,7 @@ Most applications upgrade without code changes. Check the table below; each row 
 | call `ZipFs.Add`, `Mkdir` or `ReportFile.Add` with names you build yourself | handle the new error ([details](#unportable-file-names-fail)) |
 | send MIME email from a report whose entry file is in a subfolder | check resource paths ([details](#mime-resource-paths-are-relative-to-the-report-file)) |
 | write into a captured `ReportFile` from a custom filter, or edit the manifest in memory before rendering | read [Renders work on a copy](#renders-work-on-a-copy-of-the-report) |
+| call `Render`, `RenderTemplate` or `RenderString` more than once on one `template.MiyaRender` | create a new renderer per render ([details](#a-miyarender-renders-once)) |
 
 ### Breaking changes
 
@@ -129,6 +130,17 @@ The entry, name-length and nesting limits are fixed. `api.RenderPDF` takes no op
 `api.ZipReport` and `api.MIMEReport` render into a private copy of the report (see [Renders work on a copy](#renders-work-on-a-copy-of-the-report)). In 1.0.x the rendered `report.html` and generated `_gen_*` images were left in the `ReportFile` you passed in. Now they are not, so `zpt.GetBytes("report.html")` after a render fails.
 
 Use the `JobResult` instead: `Report` holds the PDF or MIME message. If you need the rendered HTML itself, render with `template.NewMiyaRender` on `zpt.Clone()` and read `report.html` from that clone.
+
+#### A `MiyaRender` renders once
+
+A second `Render`, `RenderTemplate` or `RenderString` on the same `template.MiyaRender` returns `template.ErrRendererUsed`. In 1.0.x, rendering the same template twice returned its raw source; other repeat calls (several `RenderString`s, or a retry after a missing-parameter error) worked.
+
+Create a new renderer for each render, including a retry, and configure it with `GetEnvironment`/`SetWrapper` before rendering. `api.ZipReport` and `api.MIMEReport` already do this, so code that only uses `pkg/api` is unaffected.
+
+```go
+out, err := template.NewMiyaRender(zpt.Clone()).Render(data)
+// retry: build another renderer
+```
 
 #### MIME resource paths are relative to the report file
 

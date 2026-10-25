@@ -14,6 +14,7 @@ These changes can break existing setups. [MIGRATION.md](MIGRATION.md) explains w
   - unreadable files;
   - a symlinked `index.html`/`manifest.json`.
   - With `-s`: broken or looping symlinks, symlinked folders, and symlinks that point outside the template folder.
+- **A `MiyaRender` renders once.** A second `Render`, `RenderTemplate` or `RenderString` on the same renderer returns `template.ErrRendererUsed`. Before, rendering the same template twice returned its raw source; other repeat calls (several `RenderString`s, `RenderString` then `Render`, or a retry after a missing-parameter error) worked and now fail too. Create a new renderer per render, as `api.ZipReport` already does.
 - **API renders no longer write into your `ReportFile`.** After `api.ZipReport` or `api.MIMEReport` renders, `report.html` and generated images are not in the `ReportFile` you passed in; use the `JobResult`.
 - **A malformed or non-object `data.json` fails every render** (`invalid data.json`). An empty file, `null`, or a file with a UTF-8 byte-order mark is accepted.
 - **Folder templates are contained.** No read or write may leave the folder, whether through `..` or a symlink that resolves outside it. `LoadDir` names a required file that is such a symlink (`fileutils.ErrOutsideFolder`). Includes and assets that resolve outside are not found, and `Save()` skips them.

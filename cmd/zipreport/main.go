@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is set via ldflags at build time
-var version = "1.0.0"
+// version is set via ldflags at build time; empty means use the module version
+var version = ""
 
 var rootCmd = &cobra.Command{
 	Use:   "zipreport",

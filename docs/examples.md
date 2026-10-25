@@ -62,7 +62,7 @@ go run main.go output.pdf
 Demonstrates:
 
 - Using `png` filter for dynamic charts
-- Chart generation with gonum/plot
+- Solid-colour PNG/GIF/JPG/SVG images generated with the standard library
 - Passing data to image generators
 
 ### print_css_chrome

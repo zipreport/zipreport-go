@@ -33,11 +33,11 @@ Required fields:
 - `author` - Author name
 - `version` - Version string
 - `description` - Report description
-- `params` - List of required template parameters (can be empty `[]`)
+- `params` - List of required template parameters (optional; default `[]`)
 
 Optional fields:
 
-- `report` - Output filename (defaults to `report.html`)
+- `report` - Output filename, a relative path inside the report; a leading `/` is ignored (defaults to `report.html`)
 - `useJSEvent` - Wait for JavaScript event before rendering (default: `false`)
 
 ### index.html

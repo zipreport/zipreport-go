@@ -10,7 +10,7 @@ Business report with dynamic charts using ZipReport.
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - Running zipreport-server instance
 
 ## Configuration

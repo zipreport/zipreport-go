@@ -108,7 +108,7 @@ Filters added through an `EnvironmentWrapper` that write files into a `ReportFil
 
 A `data.json` in the report supplies default data. It must contain a JSON object (empty files and `null` are treated as no data; a UTF-8 byte-order mark is allowed); anything else makes every render fail with `invalid data.json`.
 
-Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such paths fail with fileutils.ErrOutsideFolder (`LoadDir` names the file); includes and assets that resolve outside are not found. A broken symlink is rejected even if it points inside the folder. Containment is checked on each access; see the os.Root note in the plans for the remaining check-then-open race. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report. A leading "/" in manifest.json's report is ignored.
+Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such paths fail with fileutils.ErrOutsideFolder (`LoadDir` names the file); includes and assets that resolve outside are not found. A broken symlink is rejected even if it points inside the folder. Containment is checked when a path is resolved, then the file is opened; a folder that an untrusted party can modify at the same time can race that check, so do not render from such a folder. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report. A leading "/" in manifest.json's report is ignored.
 
 ### ReportFile
 
@@ -408,7 +408,7 @@ func main() {
     })
 
     // Create job with custom settings
-    client := api.NewZipReport(os.Getenv("ZIPREPORT_URL"), os.Getenv("ZIPREPORT_API_KEY"))
+    client := api.NewZipReport(os.Getenv("ZIPREPORT_URL"), os.Getenv("ZIPREPORT_KEY"))
     job := client.CreateJob(zpt)
     job.SetPageSize(report.PageLetter)
     job.SetMargins(report.MarginStandard)

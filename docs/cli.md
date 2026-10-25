@@ -174,8 +174,8 @@ template/
 | `author` | Yes | Author name |
 | `version` | Yes | Version string |
 | `description` | Yes | Report description |
-| `params` | Yes | Required template parameters (can be `[]`) |
-| `report` | No | Output filename (default: `report.html`) |
+| `params` | No | Required template parameters (default: `[]`) |
+| `report` | No | Output filename, a relative path inside the report; a leading `/` is ignored (default: `report.html`) |
 | `useJSEvent` | No | Wait for JS event (default: `false`) |
 
 ### data.json

@@ -10,7 +10,7 @@ MIME email generation with ZipReport.
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 
 ## Running
 

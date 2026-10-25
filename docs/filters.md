@@ -37,28 +37,30 @@ In your template:
 
 ### With Arguments
 
-Pass data and attributes to the filter:
+Arguments are positional; keyword arguments (`data=...`) are ignored. See the table below for the order.
 
 ```html
 <!-- With data argument -->
-{{ generate_chart | png(data=chart_config) }}
+{{ generate_chart | png(chart_config) }}
 
-<!-- With dimensions -->
-{{ generate_chart | png(data=chart_config, width=400, height=300) }}
+<!-- With dimensions (empty alt, 400x300) -->
+{{ generate_chart | png(chart_config, "", 400, 300) }}
 
-<!-- With alt text and CSS class -->
-{{ generate_chart | png(data=chart_config, alt="Sales Chart", class="chart-img") }}
+<!-- With alt text and CSS class (no dimensions) -->
+{{ generate_chart | png(chart_config, "Sales Chart", 0, 0, "chart-img") }}
 ```
 
 ### Filter Arguments
 
-| Argument | Type | Description |
-|----------|------|-------------|
-| `data` | any | Data passed to the generator function |
-| `width` | int | Image width in pixels |
-| `height` | int | Image height in pixels |
-| `alt` | string | Alt text for the img tag |
-| `class` | string | CSS class for the img tag |
+| Position | Name | Type | Description |
+|----------|------|------|-------------|
+| 1 | `data` | any | Data passed to the generator function |
+| 2 | `alt` | string | Alt text for the img tag |
+| 3 | `width` | int | Image width in pixels (a numeric string also works) |
+| 4 | `height` | int | Image height in pixels |
+| 5 | `class` | string | CSS class for the img tag |
+
+An empty string or `0` omits that attribute.
 
 ### Generator Function Signatures
 
@@ -137,7 +139,7 @@ Template:
 
 ```html
 <div class="chart">
-    {{ chart_func | png(data=chart_data, width=400, height=300, alt="Sales Chart") }}
+    {{ chart_func | png(chart_data, "Sales Chart", 400, 300) }}
 </div>
 ```
 
@@ -162,7 +164,7 @@ data := map[string]interface{}{
 Template:
 
 ```html
-{{ badge | svg(data=status) }}
+{{ badge | svg(status) }}
 ```
 
 ## JSON Filter
@@ -171,10 +173,12 @@ Convert values to JSON strings for embedding in JavaScript:
 
 ```html
 <script>
-    const data = {{ my_data | json }};
+    const data = {{ my_data | json | safe }};
     console.log(data);
 </script>
 ```
+
+`json` output is HTML-escaped like any other value under autoescape, so add `| safe` inside `<script>`. This is safe there because `json` escapes `<`, `>` and `&` as `\u003c`, `\u003e` and `\u0026`. Do not use `| json | safe` inside an HTML attribute.
 
 ## Custom Filters
 

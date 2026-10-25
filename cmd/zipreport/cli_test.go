@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -165,8 +166,77 @@ func TestRunList_NotADirectory(t *testing.T) {
 
 func TestVersionCmd(t *testing.T) {
 	stdout, _ := captureStdout(t, func() error { versionCmd.Run(versionCmd, nil); return nil })
-	if !strings.Contains(stdout, "zipreport version "+version) {
+	if stdout != "zipreport version "+currentVersion()+"\n" {
 		t.Errorf("unexpected stdout: %q", stdout)
+	}
+}
+
+func TestResolveVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		ldflags string
+		info    *debug.BuildInfo
+		want    string
+	}{
+		{"ldflags win", "1.2.3", &debug.BuildInfo{Main: debug.Module{Version: "v9.9.9"}}, "1.2.3"},
+		{"module version", "", &debug.BuildInfo{Main: debug.Module{Version: "v1.1.0"}}, "1.1.0"},
+		{"devel", "", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, "dev"},
+		{"empty", "", &debug.BuildInfo{}, "dev"},
+		{"nil info", "", nil, "dev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveVersion(tt.ldflags, tt.info); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCLI_Binary_VersionFromBuildInfo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e binary test in short mode")
+	}
+	bin := filepath.Join(t.TempDir(), "zipreport")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "error obtaining VCS status") {
+			t.Skipf("VCS status unavailable: %s", out)
+		}
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+
+	mout, err := exec.Command("go", "version", "-m", bin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("go version -m: %v\n%s", err, mout)
+	}
+	modVer, found := "", false
+	for _, line := range strings.Split(string(mout), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 1 && f[0] == "mod" {
+			found = true
+			if len(f) >= 3 {
+				modVer = f[2]
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no mod line in go version -m output:\n%s", mout)
+	}
+	want := "dev"
+	if modVer != "" && modVer != "(devel)" {
+		want = strings.TrimPrefix(modVer, "v")
+	}
+
+	vout, err := exec.Command(bin, "version").Output()
+	if err != nil {
+		t.Fatalf("version command: %v", err)
+	}
+	if string(vout) != "zipreport version "+want+"\n" {
+		t.Errorf("unexpected version output: %q, want version %q", vout, want)
 	}
 }
 

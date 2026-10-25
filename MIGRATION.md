@@ -22,6 +22,7 @@ Most applications upgrade without code changes. Check the table below; each row 
 | send MIME email from a report whose entry file is in a subfolder | check resource paths ([details](#mime-resource-paths-are-relative-to-the-report-file)) |
 | write into a captured `ReportFile` from a custom filter, or edit the manifest in memory before rendering | read [Renders work on a copy](#renders-work-on-a-copy-of-the-report) |
 | call `Render`, `RenderTemplate` or `RenderString` more than once on one `template.MiyaRender` | create a new renderer per render ([details](#a-miyarender-renders-once)) |
+| compare or print numbers in templates | check comparisons and add `\|format_number` or `\|currency` where you want formatted amounts ([details](#templates-use-miya-v020-numbers-compare-and-print-differently)) |
 
 ### Breaking changes
 
@@ -151,6 +152,14 @@ This only matters if the entry file is in a subfolder (for example `"report": "m
 #### MIME headers reject control characters
 
 `MIMEReport` now returns an error if Subject, From or To contain CR, LF, NUL or another control character, or if an ASCII subject is longer than 989 characters. Before, such values could inject extra headers. If these fields come from user input, strip or reject control characters first.
+
+#### Templates use miya v0.2.0: numbers compare and print differently
+
+- Numbers from `data.json` now compare correctly with literals. `{% if total > 0 %}` with `total` = 0 used to take the true branch; check templates that relied on the old result.
+- Comparing a string with a number using `<`, `>`, `<=` or `>=` now fails the render. Pass numbers as numbers, or convert in the template with `|int` or `|float`.
+- Numbers print without thousands separators or two-decimal rounding: `10023`, not `10,023`; `3.14159`, not `3.14`; `0.1 + 0.2` prints `0.30000000000000004`. Where you want formatting, use `|format_number` (`10,023`) or `|currency` (`$1,234.50`).
+- Includes and macro calls nested more than 200 levels deep, combined, fail with an error instead of crashing the process.
+- miya no longer strips author links from templates named `blog_post` or containing `blog-post`, and an empty imported macro renders nothing instead of debug text.
 
 ### Changes you may notice
 

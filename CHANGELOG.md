@@ -34,6 +34,11 @@ These changes can break existing setups. [MIGRATION.md](MIGRATION.md) explains w
   - **PDF responses** over 512 MiB fail with `processor.ErrResponseTooLarge` (raise it with `WithMaxResponseSize`; `api.RenderPDF` takes no options, so its limit is fixed).
 - **MIME resource paths** are resolved relative to the folder of the manifest's report file; a leading `/` means the report root. Before, they were looked up from the root as written.
 - **MIME headers:** CR, LF, NUL or other control characters in Subject/From/To are an error, as is an ASCII subject over 989 characters.
+- **Templates render with miya v0.2.0, which changes number handling.**
+  - Numbers from JSON data now compare correctly with template literals; `{% if total > 0 %}` with `total` = 0 used to take the true branch.
+  - Comparing a string with a number using `<`, `>`, `<=` or `>=` now fails the render, so numbers must arrive as numbers.
+  - Numbers are no longer printed with thousands separators or rounded to two decimals (`10023`, not `10,023`; `3.14159`, not `3.14`), and arithmetic results print in full (`0.1 + 0.2` prints `0.30000000000000004`). Use `|format_number` or `|currency` where you want formatting.
+  - A template whose includes and macro calls nest more than 200 levels deep (combined), such as one that includes itself, now fails with an error instead of crashing the process.
 
 ### Changed
 

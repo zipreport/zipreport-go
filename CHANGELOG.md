@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-10-25
+
+### Fixed
+
+- **`zipreport version` reports the real version.** Builds without `-ldflags`, such as `go install`, used to print a hard-coded `1.0.0`; they now print the module version Go recorded (without the leading `v`), or `dev` when there is none. Builds that set `-X main.version=...` are unchanged.
+- **Docs:**
+  - image filters take positional arguments; keyword arguments were documented but are ignored;
+  - use `| json | safe` inside `<script>`;
+  - corrected the `version` command, the `ZIPREPORT_KEY` variable, and the Go 1.24 minimum.
+
 ## [1.1.0] - 2026-10-25
 
 ### Upgrading

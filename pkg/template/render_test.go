@@ -444,3 +444,47 @@ func TestMiyaRender_ConcurrentRendersOneWins(t *testing.T) {
 		t.Errorf("wins=%d used=%d, want 1 and %d", wins, used, n-1)
 	}
 }
+
+func renderOnZip(t *testing.T, index, dataJSON string, data map[string]interface{}) string {
+	t.Helper()
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte(index), false)
+	if dataJSON != "" {
+		_ = zfs.Add("data.json", []byte(dataJSON), false)
+	}
+	_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+	manifest := &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D"}
+	out, err := NewMiyaRender(report.NewReportFile(zfs, manifest)).Render(data)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	return out
+}
+
+func TestMiyaRender_DataJSONNumbersPlain(t *testing.T) {
+	out := renderOnZip(t,
+		`Invoice {{ inv }} year {{ year }} total {{ total }} pi {{ pi }}`,
+		`{"inv": 10023, "year": 2024, "total": 1234.5, "pi": 3.14159}`, nil)
+	want := "Invoice 10023 year 2024 total 1234.5 pi 3.14159"
+	if out != want {
+		t.Errorf("Output = %q, want %q", out, want)
+	}
+}
+
+func TestMiyaRender_DataJSONComparisons(t *testing.T) {
+	out := renderOnZip(t,
+		`{% if zero > 0 %}T{% else %}F{% endif %}{% if (one - 1) > 0 %}T{% else %}F{% endif %}{% if zero == 0 %}T{% else %}F{% endif %}{% if 0 in [zero] %}T{% else %}F{% endif %}`,
+		`{"zero": 0, "one": 1}`, nil)
+	if out != "FFTT" {
+		t.Errorf("Output = %q, want %q", out, "FFTT")
+	}
+}
+
+func TestMiyaRender_GoTypedComparisons(t *testing.T) {
+	out := renderOnZip(t,
+		`{% if u > 0 %}T{% else %}F{% endif %}{% if f == 0 %}T{% else %}F{% endif %}`,
+		"", map[string]interface{}{"u": uint(0), "f": float32(0)})
+	if out != "FT" {
+		t.Errorf("Output = %q, want %q", out, "FT")
+	}
+}

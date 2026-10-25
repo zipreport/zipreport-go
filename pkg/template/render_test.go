@@ -2,11 +2,13 @@ package template
 
 import (
 	"errors"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/zipreport/miya"
+	miyaruntime "github.com/zipreport/miya/runtime"
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 	"github.com/zipreport/zipreport-go/pkg/report"
 )
@@ -486,5 +488,17 @@ func TestMiyaRender_GoTypedComparisons(t *testing.T) {
 		"", map[string]interface{}{"u": uint(0), "f": float32(0)})
 	if out != "FT" {
 		t.Errorf("Output = %q, want %q", out, "FT")
+	}
+}
+
+func TestMiyaRender_SelfIncludeErrors(t *testing.T) {
+	defer debug.SetMaxStack(debug.SetMaxStack(64 << 20))
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte(`x{% include "index.html" %}`), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+	manifest := &report.Manifest{Title: "T", Author: "A", Version: "1", Description: "D"}
+	_, err := NewMiyaRender(report.NewReportFile(zfs, manifest)).Render(nil)
+	if !errors.Is(err, miyaruntime.ErrMaxRecursion) {
+		t.Errorf("err = %v, want ErrMaxRecursion", err)
 	}
 }

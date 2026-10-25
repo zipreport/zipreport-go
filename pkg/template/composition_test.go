@@ -1,12 +1,15 @@
 package template
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 
+	miyaruntime "github.com/zipreport/miya/runtime"
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 	"github.com/zipreport/zipreport-go/pkg/report"
 )
@@ -131,5 +134,18 @@ func TestTemplateComposition(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestTemplateCompositionSelfInclude(t *testing.T) {
+	defer debug.SetMaxStack(debug.SetMaxStack(64 << 20))
+	for _, kind := range []string{"zip", "zipclone", "dir", "dirclone"} {
+		t.Run(kind, func(t *testing.T) {
+			r := compositionReport(t, kind, "x{% include \"index.html\" %}")
+			_, err := NewMiyaRender(r).Render(nil)
+			if !errors.Is(err, miyaruntime.ErrMaxRecursion) {
+				t.Errorf("err = %v, want ErrMaxRecursion", err)
+			}
+		})
 	}
 }

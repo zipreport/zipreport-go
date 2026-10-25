@@ -2,6 +2,7 @@ package fileutils
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -168,5 +169,74 @@ func TestOverlayFs_RootComesFromBase(t *testing.T) {
 	}
 	if _, err := o.List(""); err == nil {
 		t.Error("List(\"\") succeeded, want error")
+	}
+}
+
+func TestOverlayFs_Accessors(t *testing.T) {
+	base := NewZipFs()
+	o := NewOverlayFs(base)
+	if o.Base() != FsInterface(base) {
+		t.Error("Base() is not the base passed in")
+	}
+	_ = o.Add("w.txt", []byte("w"), false)
+	if !o.Overlay().Exists("w.txt") {
+		t.Error("Overlay() does not hold the write")
+	}
+}
+
+func TestOverlayFs_GetPrefersOverlay(t *testing.T) {
+	base := NewZipFs()
+	_ = base.Add("a.txt", []byte("base"), false)
+	_ = base.Add("b.txt", []byte("base-b"), false)
+	o := NewOverlayFs(base)
+	_ = o.Add("a.txt", []byte("over"), true)
+
+	for name, want := range map[string]string{"a.txt": "over", "b.txt": "base-b"} {
+		rc, err := o.Get(name)
+		if err != nil {
+			t.Fatalf("Get(%s): %v", name, err)
+		}
+		got, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if string(got) != want {
+			t.Errorf("Get(%s) = %q, want %q", name, got, want)
+		}
+	}
+	if _, err := o.Get("missing.txt"); err == nil {
+		t.Error("Get(missing.txt) succeeded")
+	}
+}
+
+func TestOverlayFs_MkdirAndListDirs(t *testing.T) {
+	base := NewZipFs()
+	_ = base.Mkdir("css")
+	_ = base.Add("img/x.png", []byte("x"), false)
+	o := NewOverlayFs(base)
+	if err := o.Mkdir("fonts"); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Mkdir("img"); err != nil {
+		t.Fatal(err)
+	}
+	if base.Exists("fonts") {
+		t.Error("Mkdir reached base")
+	}
+	if !o.IsDir("fonts") {
+		t.Error("overlay dir not visible")
+	}
+
+	dirs, err := o.ListDirs("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(dirs)
+	want := []string{"css", "fonts", "img"}
+	if len(dirs) != len(want) {
+		t.Fatalf("ListDirs = %v, want %v", dirs, want)
+	}
+	for i := range want {
+		if dirs[i] != want[i] {
+			t.Fatalf("ListDirs = %v, want %v", dirs, want)
+		}
 	}
 }

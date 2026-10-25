@@ -246,3 +246,68 @@ func TestNewDebugServer_GuardOnEveryLoopbackBind(t *testing.T) {
 		}
 	}
 }
+
+func TestDebugHandler_ServesStaticAsset(t *testing.T) {
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+	if err := os.MkdirAll(filepath.Join(dir, "css"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "css", "a.css"), []byte("body{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := &debugHandler{source: dir}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/css/a.css", nil))
+	if rec.Code != 200 || rec.Body.String() != "body{}" {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+
+	// A missing asset falls back to the rendered report
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/missing.css", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<p>ok</p>") {
+		t.Errorf("missing asset: status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDebugHandler_LoadFailure(t *testing.T) {
+	h := &debugHandler{source: filepath.Join(t.TempDir(), "nope")}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Failed to load report") {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+func TestGetContentType(t *testing.T) {
+	tests := map[string]string{
+		".html":  "text/html; charset=utf-8",
+		".css":   "text/css; charset=utf-8",
+		".js":    "application/javascript; charset=utf-8",
+		".json":  "application/json; charset=utf-8",
+		".png":   "image/png",
+		".jpg":   "image/jpeg",
+		".jpeg":  "image/jpeg",
+		".gif":   "image/gif",
+		".svg":   "image/svg+xml",
+		".woff":  "font/woff",
+		".woff2": "font/woff2",
+		".ttf":   "font/ttf",
+		".otf":   "font/otf",
+		".pdf":   "application/pdf",
+		".xyz":   "application/octet-stream",
+		"":       "application/octet-stream",
+	}
+	for ext, want := range tests {
+		if got := getContentType(ext); got != want {
+			t.Errorf("getContentType(%q) = %q, want %q", ext, got, want)
+		}
+	}
+}

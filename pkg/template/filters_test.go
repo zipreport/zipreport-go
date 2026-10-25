@@ -1,7 +1,12 @@
 package template
 
 import (
+	"errors"
+	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/zipreport/miya/runtime"
 )
 
 func TestToInt(t *testing.T) {
@@ -244,5 +249,117 @@ func TestGenerateUID(t *testing.T) {
 	}
 	if uid3 != uid2+1 {
 		t.Errorf("UIDs should be sequential: %d, %d", uid2, uid3)
+	}
+}
+
+func TestImageFilter_GeneratorTypes(t *testing.T) {
+	img := []byte("IMG")
+	tests := []struct {
+		name     string
+		callable interface{}
+	}{
+		{"func(data)", func(d interface{}) []byte { return []byte(d.(string)) }},
+		{"func(data) error", func(d interface{}) ([]byte, error) { return []byte(d.(string)), nil }},
+		{"func()", func() []byte { return img }},
+		{"func() error", func() ([]byte, error) { return img, nil }},
+		{"bytes", img},
+	}
+	src := regexp.MustCompile(`^<img src="(_gen_\d+\.png)" alt="a" width="10" height="20" class="c" />$`)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := createTestReportForRender()
+			got, err := createImageFilter(r, "png", "image/png")(tt.callable, "IMG", "a", 10, 20, "c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sv, ok := got.(runtime.SafeValue)
+			if !ok {
+				t.Fatalf("result type = %T, want runtime.SafeValue", got)
+			}
+			m := src.FindStringSubmatch(sv.Value.(string))
+			if m == nil {
+				t.Fatalf("tag = %q", sv.Value)
+			}
+			content, err := r.GetBytes(m[1])
+			if err != nil || string(content) != "IMG" {
+				t.Errorf("%s = %q, %v; want IMG", m[1], content, err)
+			}
+		})
+	}
+}
+
+func TestImageFilter_Errors(t *testing.T) {
+	genErr := errors.New("boom")
+	tests := []struct {
+		name     string
+		callable interface{}
+		want     string
+	}{
+		{"func(data) error", func(interface{}) ([]byte, error) { return nil, genErr }, "error generating image"},
+		{"func() error", func() ([]byte, error) { return nil, genErr }, "error generating image"},
+		{"empty", func() []byte { return nil }, "empty image data"},
+		{"invalid type", "not a generator", "invalid image generator type: string"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := createTestReportForRender()
+			_, err := createImageFilter(r, "png", "image/png")(tt.callable)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+			if strings.HasPrefix(tt.want, "error generating") && !errors.Is(err, genErr) {
+				t.Errorf("err = %v, want wrapped generator error", err)
+			}
+			names, _ := r.GetFs().ListFiles("")
+			for _, n := range names {
+				if strings.HasPrefix(n, "_gen_") {
+					t.Errorf("%s added on error", n)
+				}
+			}
+		})
+	}
+}
+
+func TestRegisterDefaultFilters_InTemplate(t *testing.T) {
+	tests := []struct {
+		filter string
+		ext    string
+	}{
+		{"png", "png"},
+		{"gif", "gif"},
+		{"jpg", "jpg"},
+		{"jpeg", "jpg"},
+		{"svg", "svg"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.filter, func(t *testing.T) {
+			r := createTestReportForRender()
+			mr := NewMiyaRender(r)
+			gen := func(d interface{}) []byte { return []byte("data:" + d.(string)) }
+			out, err := mr.RenderString(`{{ gen|`+tt.filter+`(d, "x<y", 5) }}`, map[string]interface{}{"gen": gen, "d": "v"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := regexp.MustCompile(`^<img src="(_gen_\d+\.` + tt.ext + `)" alt="x&lt;y" width="5" />$`).FindStringSubmatch(out)
+			if m == nil {
+				t.Fatalf("output = %q", out)
+			}
+			content, err := r.GetBytes(m[1])
+			if err != nil || string(content) != "data:v" {
+				t.Errorf("%s = %q, %v; want data:v", m[1], content, err)
+			}
+		})
+	}
+}
+
+func TestRegisterDefaultFilters_JSONInTemplate(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender())
+	out, err := mr.RenderString(`{{ v|json }}`, map[string]interface{}{"v": []int{1, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "[1,2]" {
+		t.Errorf("output = %q, want [1,2]", out)
 	}
 }

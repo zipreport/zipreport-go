@@ -81,3 +81,21 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: go build -v ./cmd/zipreport
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache-dependency-path: |
+            go.sum
+            examples/*/go.sum
+
+      - name: Vet examples
+        run: make examples

@@ -1,4 +1,4 @@
-.PHONY: test test-verbose test-coverage lint build install clean help
+.PHONY: test test-verbose test-coverage lint build install clean help examples
 
 # Default target
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "  build         - Build the CLI"
 	@echo "  install       - Install the CLI"
 	@echo "  clean         - Remove build artifacts"
+	@echo "  examples      - Vet every example module"
 
 # Run tests
 test:
@@ -42,3 +43,10 @@ install:
 clean:
 	rm -rf bin/
 	rm -f coverage.out
+
+# Vet every example module (each has its own go.mod)
+examples:
+	@for d in examples/*/; do \
+		echo "vet $$d"; \
+		(cd "$$d" && GOFLAGS=-mod=readonly go vet ./...) || exit 1; \
+	done

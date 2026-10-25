@@ -42,7 +42,7 @@ var ManifestRequiredFields = []string{
 const (
 	DefaultPageSize     = PageA4
 	DefaultMarginStyle  = MarginStandard
-	DefaultSettlingTime = 200  // milliseconds
-	DefaultJSTimeout    = 60   // seconds
-	DefaultJobTimeout   = 120  // seconds
+	DefaultSettlingTime = 200 // milliseconds
+	DefaultJSTimeout    = 60  // seconds
+	DefaultJobTimeout   = 120 // seconds
 )

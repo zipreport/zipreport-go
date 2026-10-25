@@ -17,9 +17,9 @@ type ReportJob struct {
 	margins       MarginStyle
 	customMargins *Margins
 	landscape     bool
-	settlingTime  int  // milliseconds
-	jsTimeout     int  // seconds
-	jobTimeout    int  // seconds
+	settlingTime  int // milliseconds
+	jsTimeout     int // seconds
+	jobTimeout    int // seconds
 	useJSEvent    bool
 }
 

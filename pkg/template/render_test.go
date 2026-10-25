@@ -3,6 +3,7 @@ package template
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zipreport/miya"
@@ -358,6 +359,7 @@ func TestMiyaRender_DataJSONWithBOM(t *testing.T) {
 	}
 }
 
+// Also pins that filterError is checked before the single-use claim.
 func TestMiyaRender_FilterErrorSurfaced(t *testing.T) {
 	mr := NewMiyaRender(createTestReportForRender())
 	mr.filterError = errors.New("boom")
@@ -366,5 +368,79 @@ func TestMiyaRender_FilterErrorSurfaced(t *testing.T) {
 	}
 	if _, err := mr.RenderString("{{ 1 }}", nil); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("RenderString err = %v, want boom", err)
+	}
+}
+
+func TestMiyaRender_SecondRenderFails(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender())
+	out, err := mr.Render(map[string]interface{}{"name": "First"})
+	if err != nil || out != "<html><body>First</body></html>" {
+		t.Fatalf("first Render = %q, %v", out, err)
+	}
+	out, err = mr.Render(map[string]interface{}{"name": "Second"})
+	if out != "" || !errors.Is(err, ErrRendererUsed) {
+		t.Errorf("second Render = %q, %v; want empty and ErrRendererUsed", out, err)
+	}
+}
+
+func TestMiyaRender_RenderStringAfterRenderFails(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender())
+	if _, err := mr.Render(map[string]interface{}{"name": "x"}); err != nil {
+		t.Fatalf("first Render: %v", err)
+	}
+	if _, err := mr.RenderString("{{ 1 }}", nil); !errors.Is(err, ErrRendererUsed) {
+		t.Errorf("RenderString err = %v, want ErrRendererUsed", err)
+	}
+}
+
+func TestMiyaRender_RenderTemplateAfterRenderStringFails(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender())
+	if _, err := mr.RenderString("x", nil); err != nil {
+		t.Fatalf("RenderString: %v", err)
+	}
+	if _, err := mr.RenderTemplate("index.html", map[string]interface{}{"name": "a"}); !errors.Is(err, ErrRendererUsed) {
+		t.Errorf("RenderTemplate err = %v, want ErrRendererUsed", err)
+	}
+}
+
+func TestMiyaRender_FailedRenderStillConsumes(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender(), WithStrictParams(true))
+	if _, err := mr.Render(nil); err == nil {
+		t.Fatal("expected missing-parameter error")
+	}
+	if _, err := mr.Render(map[string]interface{}{"name": "x"}); !errors.Is(err, ErrRendererUsed) {
+		t.Errorf("retry err = %v, want ErrRendererUsed", err)
+	}
+}
+
+func TestMiyaRender_ConcurrentRendersOneWins(t *testing.T) {
+	mr := NewMiyaRender(createTestReportForRender())
+	const n = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	wins, used := 0, 0
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			out, err := mr.Render(map[string]interface{}{"name": "x"})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil && out == "<html><body>x</body></html>":
+				wins++
+			case errors.Is(err, ErrRendererUsed):
+				used++
+			default:
+				t.Errorf("unexpected result %q, %v", out, err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if wins != 1 || used != n-1 {
+		t.Errorf("wins=%d used=%d, want 1 and %d", wins, used, n-1)
 	}
 }

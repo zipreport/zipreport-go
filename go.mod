@@ -2,7 +2,7 @@ module github.com/zipreport/zipreport-go
 
 go 1.24.12
 
-require github.com/zipreport/miya v0.1.1
+require github.com/zipreport/miya v0.2.0
 
 require github.com/spf13/cobra v1.10.2
 

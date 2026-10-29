@@ -456,6 +456,38 @@ func TestServerBackend_Render_ErrorBodyReadIsBounded(t *testing.T) {
 	}
 }
 
+func TestServerBackend_Render_ResponseReadIsBounded(t *testing.T) {
+	const total = 64 << 20
+	var written atomic.Int64
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		w.Header().Set("Content-Type", "application/pdf")
+		chunk := []byte(strings.Repeat("x", 32<<10))
+		for written.Load() < total {
+			n, err := w.Write(chunk)
+			written.Add(int64(n))
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	_, err := NewServerBackend(srv.URL, "k", WithMaxResponseSize(1024)).Render([]byte("z"), nil)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("expected ErrResponseTooLarge, got %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	if written.Load() >= total {
+		t.Fatalf("server wrote all %d bytes: response read is unbounded", written.Load())
+	}
+}
+
 func TestServerBackend_Render_RefusesCrossHostRedirect(t *testing.T) {
 	for _, code := range []int{http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {

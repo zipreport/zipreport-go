@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -409,6 +410,37 @@ func TestDiskFs_Snapshot_SizeBounded(t *testing.T) {
 	}
 	if snapshotOf(t, small).Exists("locked.bin") {
 		t.Error("unreadable file was included")
+	}
+}
+
+func TestDiskFs_Snapshot_OversizedFileReadIsBounded(t *testing.T) {
+	const size = 64 << 20
+	setMaxUncompressed(t, 1024)
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "index.html"), "<html></html>")
+	f, err := os.Create(filepath.Join(dir, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil { // sparse: no 64 MiB disk write on ext4/tmpfs/APFS
+		t.Fatal(err)
+	}
+	f.Close()
+	dfs, err := NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = dfs.Snapshot()
+	runtime.ReadMemStats(&after)
+
+	if !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > 16<<20 {
+		t.Fatalf("Snapshot allocated %d bytes for a %d-byte file over a 1024-byte limit: read is unbounded", n, size)
 	}
 }
 

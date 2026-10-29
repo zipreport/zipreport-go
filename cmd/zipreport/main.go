@@ -29,6 +29,7 @@ func main() {
 		listCmd,
 		infoCmd,
 		debugCmd,
+		renderCmd,
 		versionCmd,
 	)
 

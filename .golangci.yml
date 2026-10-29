@@ -5,3 +5,7 @@ linters:
     presets:
       # Same unchecked-Close/Remove exclusions golangci-lint v1 applied by default
       - std-error-handling
+
+formatters:
+  enable:
+    - gofmt

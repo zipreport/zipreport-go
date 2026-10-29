@@ -515,6 +515,7 @@ func TestReportFile_Save_CustomFsListingIncompleteAddsKnownFiles(t *testing.T) {
 }
 
 func TestReportFile_Save_UnreadableIndexFails(t *testing.T) {
+	skipOnWindows(t)
 	if os.Geteuid() == 0 {
 		t.Skip("permission checks do not apply to root")
 	}

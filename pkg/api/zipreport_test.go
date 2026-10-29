@@ -216,6 +216,26 @@ func TestRenderMIME(t *testing.T) {
 	}
 }
 
+func TestRenderMIME_ToJSONDataDoesNotEmbedFiles(t *testing.T) {
+	zfs := fileutils.NewZipFs()
+	_ = zfs.Add("index.html", []byte("<html><script>var d = {{ d|tojson }};</script></html>"), false)
+	_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+	_ = zfs.Add("secret.txt", []byte("SECRETCONTENT"), false)
+	rf, err := report.LoadZipFs(zfs)
+	if err != nil {
+		t.Fatalf("LoadZipFs: %v", err)
+	}
+
+	result := RenderMIME(rf, map[string]interface{}{"d": map[string]interface{}{"s": "src='secret.txt'"}})
+	if !result.Success {
+		t.Fatalf("RenderMIME failed: %s", result.Error)
+	}
+	out := string(result.Report)
+	if strings.Contains(out, "Content-ID:") || strings.Contains(out, "filename=secret.txt") {
+		t.Errorf("data-controlled text embedded a report file:\n%s", out)
+	}
+}
+
 // capturingBackend records the ZPT payload and returns its rendered report.html as the "PDF"
 type capturingBackend struct {
 	mu       sync.Mutex

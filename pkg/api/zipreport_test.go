@@ -1,13 +1,19 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 	"github.com/zipreport/zipreport-go/pkg/processor"
@@ -408,5 +414,78 @@ func TestBaseReport_Render_EscapingOutputRejected(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "invalid path") {
 		t.Errorf("Error = %q, want it to contain %q", result.Error, "invalid path")
+	}
+}
+
+// newBlockingPDFServer returns a server that signals on the returned channel once it has the
+// request, then waits for the client to disconnect or for 2s before answering with a PDF.
+func newBlockingPDFServer(t *testing.T) (*httptest.Server, <-chan struct{}) {
+	t.Helper()
+	started := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// net/http only notices a client disconnect after the body has been read
+		_, _ = io.Copy(io.Discard, r.Body)
+		started <- struct{}{}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(2 * time.Second):
+			w.Header().Set("Content-Type", "application/pdf")
+			_, _ = w.Write([]byte("%PDF-1.4"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, started
+}
+
+func TestBaseReport_RenderContext_Cancel(t *testing.T) {
+	srv, started := newBlockingPDFServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	start := time.Now()
+	result := NewZipReport(srv.URL, "k").RenderDefaultsContext(ctx, newIsolationReport(t, "<p>x</p>"), nil, nil)
+
+	if result.Success {
+		t.Errorf("Success = true, want false")
+	}
+	if !strings.Contains(result.Error, "context canceled") {
+		t.Errorf("Error = %q, want it to contain %q", result.Error, "context canceled")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("render took %v after cancel", d)
+	}
+}
+
+func TestRenderPDF_Options(t *testing.T) {
+	var hits int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Auth-Key") != "" {
+			atomic.AddInt32(&hits, 1)
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4"))
+	}))
+	t.Cleanup(srv.Close)
+	rf := newIsolationReport(t, "<p>x</p>")
+
+	result := RenderPDF(rf, nil, srv.URL, "k", processor.WithSecureSSL(true))
+	if result.Success {
+		t.Errorf("Success = true with WithSecureSSL(true) on a self-signed server")
+	}
+	if !strings.Contains(result.Error, "certificate") {
+		t.Errorf("Error = %q, want it to contain %q", result.Error, "certificate")
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("server got %d requests, want 0", n)
+	}
+
+	result = RenderPDF(rf, nil, srv.URL, "k")
+	if !result.Success {
+		t.Errorf("default RenderPDF failed: %s", result.Error)
 	}
 }

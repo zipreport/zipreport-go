@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -119,5 +120,51 @@ func TestZipReportProcessor_Process_BackendError(t *testing.T) {
 	}
 	if result.Error == "" {
 		t.Error("Error message should not be empty")
+	}
+}
+
+type ctxKey struct{}
+
+// ctxBackend implements both Render and RenderContext
+type ctxBackend struct {
+	gotCtx context.Context
+}
+
+func (c *ctxBackend) Render(zptData []byte, options map[string]interface{}) ([]byte, error) {
+	return []byte("plain"), nil
+}
+
+func (c *ctxBackend) RenderContext(ctx context.Context, zptData []byte, options map[string]interface{}) ([]byte, error) {
+	c.gotCtx = ctx
+	return []byte("ctx"), nil
+}
+
+func TestZipReportProcessor_ProcessContext_UsesRenderContext(t *testing.T) {
+	backend := &ctxBackend{}
+	p := NewZipReportProcessor(backend)
+	job := report.NewReportJob(createTestReportForProcessor())
+	ctx := context.WithValue(context.Background(), ctxKey{}, "v")
+
+	result := p.ProcessContext(ctx, job)
+
+	if !result.Success {
+		t.Fatalf("ProcessContext failed: %s", result.Error)
+	}
+	if string(result.Report) != "ctx" {
+		t.Errorf("result = %q, want %q", result.Report, "ctx")
+	}
+	if backend.gotCtx == nil || backend.gotCtx.Value(ctxKey{}) != "v" {
+		t.Errorf("backend did not receive the caller's context")
+	}
+}
+
+func TestZipReportProcessor_ProcessContext_PlainBackend(t *testing.T) {
+	p := NewZipReportProcessor(&mockBackend{result: []byte("PDF")})
+	job := report.NewReportJob(createTestReportForProcessor())
+
+	result := p.ProcessContext(context.Background(), job)
+
+	if !result.Success || string(result.Report) != "PDF" {
+		t.Errorf("result = %+v, want success with PDF", result)
 	}
 }

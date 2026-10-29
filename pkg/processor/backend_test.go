@@ -1,8 +1,10 @@
 package processor
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -451,5 +453,191 @@ func TestServerBackend_Render_ErrorBodyReadIsBounded(t *testing.T) {
 	}
 	if written.Load() >= total {
 		t.Fatalf("server wrote all %d bytes: error body read is unbounded", written.Load())
+	}
+}
+
+func TestServerBackend_Render_RefusesCrossHostRedirect(t *testing.T) {
+	for _, code := range []int{http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			var hits int32
+			b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&hits, 1)
+				w.Header().Set("Content-Type", "application/pdf")
+				_, _ = w.Write([]byte("%PDF-1.4"))
+			}))
+			t.Cleanup(b.Close)
+			a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, b.URL+"/v2/render", code)
+			}))
+			t.Cleanup(a.Close)
+
+			_, err := NewServerBackend(a.URL, "k").Render([]byte("zpt"), nil)
+			if n := atomic.LoadInt32(&hits); n != 0 {
+				t.Errorf("redirect target got %d requests, want 0", n)
+			}
+			if err == nil {
+				t.Errorf("err = nil, want error")
+			}
+			if !errors.Is(err, ErrRedirectRefused) {
+				t.Errorf("err = %v, want ErrRedirectRefused", err)
+			}
+		})
+	}
+}
+
+func TestServerBackend_Render_FollowsSameHostRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/render" {
+			http.Redirect(w, r, "/v2/render2", http.StatusTemporaryRedirect)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if r.Header.Get("X-Auth-Key") != "k" || len(body) == 0 {
+			http.Error(w, "bad", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4"))
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := NewServerBackend(srv.URL, "k").Render([]byte("zpt"), nil); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+}
+
+func TestCheckRedirect(t *testing.T) {
+	req := func(u string) *http.Request { return httptest.NewRequest(http.MethodPost, u, nil) }
+	tooMany := make([]*http.Request, 10)
+	for i := range tooMany {
+		tooMany[i] = req("http://h/a")
+	}
+	tests := []struct {
+		name    string
+		via     []*http.Request
+		to      string
+		wantErr bool
+		refused bool
+	}{
+		{"same_host", []*http.Request{req("http://h:1/a")}, "http://h:1/b", false, false},
+		{"different_port", []*http.Request{req("http://h:1/a")}, "http://h:2/a", true, true},
+		{"different_hostname", []*http.Request{req("http://h/a")}, "http://other/a", true, true},
+		{"https_to_http", []*http.Request{req("https://h/a")}, "http://h/a", true, true},
+		{"http_to_https", []*http.Request{req("http://h/a")}, "https://h/a", false, false},
+		{"too_many_redirects", tooMany, "http://h/b", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckRedirect(req(tt.to), tt.via)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if errors.Is(err, ErrRedirectRefused) != tt.refused {
+				t.Errorf("errors.Is(err, ErrRedirectRefused) = %v, want %v (err = %v)", !tt.refused, tt.refused, err)
+			}
+		})
+	}
+}
+
+func TestServerBackend_CustomClientKeepsRedirectPolicy(t *testing.T) {
+	sentinel := errors.New("custom policy")
+	tests := []struct {
+		name string
+		opts []ServerOption
+	}{
+		{"as_given", nil},
+		{"with_timeout", []ServerOption{WithTimeout(time.Minute)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return sentinel }}
+			b := NewServerBackend("http://a.example", "k", append([]ServerOption{WithHTTPClient(client)}, tt.opts...)...)
+			next := httptest.NewRequest(http.MethodPost, "http://b.example/x", nil)
+			via := []*http.Request{httptest.NewRequest(http.MethodPost, "http://a.example/x", nil)}
+			if err := b.httpClient.CheckRedirect(next, via); !errors.Is(err, sentinel) {
+				t.Errorf("err = %v, want sentinel", err)
+			}
+		})
+	}
+}
+
+func TestServerBackend_Render_TrailingSlash(t *testing.T) {
+	for _, tt := range []struct{ name, suffix string }{{"one_slash", "/"}, {"two_slashes", "//"}} {
+		t.Run(tt.name, func(t *testing.T) {
+			var path atomic.Value
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path.Store(r.URL.Path)
+				w.Header().Set("Content-Type", "application/pdf")
+				_, _ = w.Write([]byte("%PDF-1.4"))
+			}))
+			t.Cleanup(srv.Close)
+
+			given := srv.URL + tt.suffix
+			b := NewServerBackend(given, "k")
+			if _, err := b.Render([]byte("zpt"), nil); err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if got, _ := path.Load().(string); got != "/v2/render" {
+				t.Errorf("path = %q, want /v2/render", got)
+			}
+			if b.URL() != given {
+				t.Errorf("URL() = %q, want %q", b.URL(), given)
+			}
+		})
+	}
+}
+
+// newBlockingPDFServer returns a server that signals on the returned channel once it has the
+// request, then waits for the client to disconnect or for 2s before answering with a PDF.
+func newBlockingPDFServer(t *testing.T) (*httptest.Server, <-chan struct{}) {
+	t.Helper()
+	started := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// net/http only notices a client disconnect after the body has been read
+		_, _ = io.Copy(io.Discard, r.Body)
+		started <- struct{}{}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(2 * time.Second):
+			w.Header().Set("Content-Type", "application/pdf")
+			_, _ = w.Write([]byte("%PDF-1.4"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, started
+}
+
+func TestServerBackend_RenderContext_Cancel(t *testing.T) {
+	srv, started := newBlockingPDFServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := NewServerBackend(srv.URL, "k").RenderContext(ctx, []byte("zpt"), nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("RenderContext took %v after cancel", d)
+	}
+}
+
+func TestServerBackend_RenderContext_Deadline(t *testing.T) {
+	srv, _ := newBlockingPDFServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := NewServerBackend(srv.URL, "k").RenderContext(ctx, []byte("zpt"), nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("RenderContext took %v", d)
 	}
 }

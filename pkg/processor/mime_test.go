@@ -7,6 +7,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/mail"
+	"sort"
 	"strings"
 	"testing"
 
@@ -705,5 +706,73 @@ func TestMIMEProcessor_LeadingSlashReportName(t *testing.T) {
 		if k != "html" && string(v) != "PNG" {
 			t.Errorf("part %s = %q, want PNG", k, v)
 		}
+	}
+}
+
+func TestMIMEProcessor_ReferenceSyntax(t *testing.T) {
+	const rcid = `src="cid:resource0@zipreport"`
+	tests := []struct {
+		name         string
+		html         string
+		files        map[string]string
+		wantEmbedded []string
+		wantHTML     []string
+	}{
+		{"uppercase_img", `<IMG SRC="a.png">`, map[string]string{"a.png": "IMG-A"}, []string{"IMG-A"}, []string{`SRC="cid:resource0@zipreport"`}},
+		{"uppercase_link", `<LINK REL="stylesheet" HREF="s.css">`, map[string]string{"s.css": "CSS"}, []string{"CSS"}, []string{`HREF="cid:resource0@zipreport"`}},
+		{"unquoted_not_embedded", `<td width=1 src=secret.txt><img src=a.png>`, map[string]string{"secret.txt": "SECRET", "a.png": "IMG-A"}, nil, []string{`src=secret.txt`, `src=a.png>`}},
+		{"spaces_around_equals", `<img src = "a.png">`, map[string]string{"a.png": "IMG-A"}, []string{"IMG-A"}, []string{`src = "cid:resource0@zipreport"`}},
+		{"query_not_cut", `<img src="images/../secret.txt?.png"><img src="a.png#x">`, map[string]string{"secret.txt": "SECRET", "a.png": "IMG-A"}, nil, []string{`src="images/../secret.txt?.png"`, `src="a.png#x"`}},
+		{"percent_space", `<img src="my%20img.png">`, map[string]string{"my img.png": "IMG-SP"}, []string{"IMG-SP"}, []string{rcid}},
+		{"invalid_percent_literal", `<img src="100%.png">`, map[string]string{"100%.png": "PCT"}, []string{"PCT"}, []string{rcid}},
+		{"entity_amp", `<img src="a&amp;b.png">`, map[string]string{"a&b.png": "AMP"}, []string{"AMP"}, []string{rcid}},
+		{"data_src_ignored", `<img data-src="lazy.png">`, map[string]string{"lazy.png": "LAZY"}, nil, []string{`data-src="lazy.png"`}},
+		{"text_not_scanned", `<p>src="text.png"</p>`, map[string]string{"text.png": "TXT"}, nil, []string{`<p>src="text.png"</p>`}},
+		{"script_not_scanned", `<script>el.innerHTML = '<img src="secret.txt">';</script>`, map[string]string{"secret.txt": "SECRET"}, nil, []string{`<img src="secret.txt">`}},
+		{"style_not_scanned", `<style>/* <img src="s.png"> */</style>`, map[string]string{"s.png": "S"}, nil, []string{`src="s.png"`}},
+		{"script_end_needs_delimiter", `<script>x = "</scripts>"; y = '<img src="secret.txt">';</script>`, map[string]string{"secret.txt": "SECRET"}, nil, []string{`<img src="secret.txt">`}},
+		{"script_end_uppercase", `<script>x = 1;</SCRIPT><img src="a.png">`, map[string]string{"a.png": "IMG-A"}, []string{"IMG-A"}, []string{rcid}},
+		{"invalid_utf8_in_script", "<script>" + strings.Repeat("\xff", 15) + "</script><img src=\"a.png\"><script>x = '<img src=\"secret.txt\">';</script>", map[string]string{"a.png": "IMG-A", "secret.txt": "SECRET"}, []string{"IMG-A"}, []string{`<img src="secret.txt">`}},
+		{"plain_comment_not_scanned", `<!-- <img src="c.png"> -->`, map[string]string{"c.png": "C"}, nil, []string{`src="c.png"`}},
+		{"bang_comment_end", `<!-- x --!><img src="b.png">`, map[string]string{"b.png": "BANG"}, []string{"BANG"}, []string{rcid}},
+		{"mso_conditional_scanned", `<!--[if mso]><img src="m.png"><![endif]-->`, map[string]string{"m.png": "MSO"}, []string{"MSO"}, []string{rcid}},
+		{"downlevel_revealed_scanned", `<!--[if !mso]><!--><img src="r.png"><!--<![endif]-->`, map[string]string{"r.png": "REV"}, []string{"REV"}, []string{rcid}},
+		{"script_src_scanned", `<script src="app.js"></script>`, map[string]string{"app.js": "JS"}, []string{"JS"}, []string{rcid}},
+		{"encoded_hidden_skipped", `<img src="%2Eenv"><img src="a.png">`, map[string]string{".env": "SECRET", "a.png": "IMG-A"}, []string{"IMG-A"}, []string{`src="%2Eenv"`}},
+		{"entity_hidden_skipped", `<img src="&#46;env"><img src="a.png">`, map[string]string{".env": "SECRET", "a.png": "IMG-A"}, []string{"IMG-A"}, []string{`src="&#46;env"`}},
+		{"decoded_scheme_not_file", `<img src="cid%3Ax@y"><img src="%2F%2Fa.png">`, map[string]string{"cid:x@y": "TRAP", "a.png": "IMG-A"}, nil, []string{`src="cid%3Ax@y"`, `src="%2F%2Fa.png"`}},
+		{"html_trailing_slash_skipped", `<img src="index.html/">`, map[string]string{"index.html": "TEMPLATE"}, nil, []string{`src="index.html/"`}},
+		{"empty_src_ignored", `<img src="">`, nil, nil, []string{`src=""`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{"report.html": tt.html}
+			for k, v := range tt.files {
+				files[k] = v
+			}
+			result := processMIME(newTestReport(files, &report.Manifest{Title: "T"}))
+			if !result.Success {
+				t.Fatalf("Process failed: %s", result.Error)
+			}
+			parts := mimeParts(t, result.Report)
+			var got []string
+			for k, v := range parts {
+				if k != "html" {
+					got = append(got, string(v))
+				}
+			}
+			sort.Strings(got)
+			want := append([]string(nil), tt.wantEmbedded...)
+			sort.Strings(want)
+			if strings.Join(got, "|") != strings.Join(want, "|") || len(got) != len(want) {
+				t.Errorf("embedded = %q, want %q", got, want)
+			}
+			html := string(parts["html"])
+			for _, w := range tt.wantHTML {
+				if !strings.Contains(html, w) {
+					t.Errorf("HTML %q does not contain %q", html, w)
+				}
+			}
+		})
 	}
 }

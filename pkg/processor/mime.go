@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"mime"
 	"net/mail"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -129,7 +131,10 @@ func (p *MIMEProcessor) buildMIMEMessage(r *report.ReportFile, reportName string
 	cidByRef := make(map[string]string)
 	baseDir := path.Dir(strings.TrimPrefix(reportName, "/"))
 	for _, ref := range resources {
-		resolved := resolveResource(baseDir, ref)
+		resolved, ok := resourcePath(baseDir, ref)
+		if !ok {
+			continue
+		}
 		if !fileutils.IsServable(r.GetFs(), resolved) {
 			continue // never embed hidden files
 		}
@@ -148,8 +153,7 @@ func (p *MIMEProcessor) buildMIMEMessage(r *report.ReportFile, reportName string
 	}
 
 	// Replace embedded references with cid: references, only inside src and <link href> values
-	modifiedHTML := rewriteRefs(string(htmlContent), srcRegex, cidByRef)
-	modifiedHTML = rewriteRefs(modifiedHTML, linkHrefRegex, cidByRef)
+	modifiedHTML := rewriteRefs(string(htmlContent), cidByRef)
 
 	// Write HTML part
 	fmt.Fprintf(&buf, "--%s\r\n", boundary)
@@ -184,17 +188,22 @@ func resolveResource(baseDir, ref string) string {
 	return path.Join(baseDir, ref)
 }
 
-// rewriteRefs replaces the captured reference in each match of re with its cid: form.
+// rewriteRefs replaces each reference that has an embedded part with its cid: form.
 // References without an embedded part are left unchanged.
-func rewriteRefs(html string, re *regexp.Regexp, cidByRef map[string]string) string {
-	return re.ReplaceAllStringFunc(html, func(m string) string {
-		loc := re.FindStringSubmatchIndex(m)
-		cid, ok := cidByRef[m[loc[2]:loc[3]]]
+func rewriteRefs(doc string, cidByRef map[string]string) string {
+	var sb strings.Builder
+	last := 0
+	for _, ref := range findResourceRefs(doc) {
+		cid, ok := cidByRef[ref.value]
 		if !ok {
-			return m
+			continue
 		}
-		return m[:loc[2]] + "cid:" + cid + m[loc[3]:]
-	})
+		sb.WriteString(doc[last:ref.start])
+		sb.WriteString("cid:" + cid)
+		last = ref.end
+	}
+	sb.WriteString(doc[last:])
+	return sb.String()
 }
 
 // maxHeaderLineLength is the maximum header line length allowed by RFC 5322.
@@ -235,53 +244,198 @@ func writeBase64Lines(buf *bytes.Buffer, data []byte) {
 	buf.WriteString("\r\n")
 }
 
-// srcRegex matches src attributes (images, scripts, media).
-var srcRegex = regexp.MustCompile(`\bsrc=["']([^"']+)["']`)
-
-// linkHrefRegex matches href attributes of <link> elements (stylesheets, icons). Anchor hrefs are links, not resources.
-var linkHrefRegex = regexp.MustCompile(`<link\b[^>]*\bhref=["']([^"']+)["']`)
-
 // schemeRegex matches references that start with a URL scheme (http:, mailto:, data:, cid:, ...).
 var schemeRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 
-// extractResources finds local resource references in HTML.
-func extractResources(html string) []string {
-	matches := srcRegex.FindAllStringSubmatch(html, -1)
-	matches = append(matches, linkHrefRegex.FindAllStringSubmatch(html, -1)...)
+// resourceRef is a quoted src attribute value (any element) or a quoted <link href> value, as written in the HTML.
+type resourceRef struct {
+	start, end int // byte offsets of the value in the HTML, without its quotes
+	value      string
+}
 
+// rawTextTags are elements whose content is never markup.
+var rawTextTags = map[string]bool{
+	"script": true, "style": true, "textarea": true, "title": true,
+	"xmp": true, "iframe": true, "noembed": true, "noframes": true,
+}
+
+func isHTMLSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r'
+}
+
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c | 0x20
+		}
+	}
+	return string(b)
+}
+
+// findRawTextEnd returns the index of the "</" that closes the raw-text element tag, or -1.
+func findRawTextEnd(doc string, from int, tag string) int {
+	for i := from; i+1 < len(doc); i++ {
+		if doc[i] != '<' || doc[i+1] != '/' {
+			continue
+		}
+		end := i + 2 + len(tag)
+		if end > len(doc) || !strings.EqualFold(doc[i+2:end], tag) {
+			continue
+		}
+		if end == len(doc) || isHTMLSpace(doc[end]) || doc[end] == '/' || doc[end] == '>' {
+			return i
+		}
+	}
+	return -1
+}
+
+// findResourceRefs scans start tags the way an HTML tokenizer does and returns every quoted src and <link href> value.
+func findResourceRefs(doc string) []resourceRef {
+	var refs []resourceRef
+	n := len(doc)
+	i := 0
+	for i < n {
+		lt := strings.IndexByte(doc[i:], '<')
+		if lt < 0 {
+			break
+		}
+		i += lt
+		rest := doc[i:]
+		switch {
+		case strings.HasPrefix(rest, "<!--[if"):
+			i += len("<!--")
+		case strings.HasPrefix(rest, "<!-->"):
+			i += len("<!-->")
+		case strings.HasPrefix(rest, "<!--->"):
+			i += len("<!--->")
+		case strings.HasPrefix(rest, "<!--"):
+			from := i + len("<!--")
+			a := strings.Index(doc[from:], "-->")
+			b := strings.Index(doc[from:], "--!>")
+			switch {
+			case a < 0 && b < 0:
+				return refs
+			case b < 0 || (a >= 0 && a < b):
+				i = from + a + len("-->")
+			default:
+				i = from + b + len("--!>")
+			}
+		case strings.HasPrefix(rest, "<!") || strings.HasPrefix(rest, "</"):
+			gt := strings.IndexByte(doc[i:], '>')
+			if gt < 0 {
+				return refs
+			}
+			i += gt + 1
+		case len(rest) > 1 && isASCIILetter(rest[1]):
+			j := i + 1
+			for j < n && !isHTMLSpace(doc[j]) && doc[j] != '/' && doc[j] != '>' {
+				j++
+			}
+			tag := asciiLower(doc[i+1 : j])
+			closed := false
+			for j < n && !closed {
+				for j < n && (isHTMLSpace(doc[j]) || doc[j] == '/') {
+					j++
+				}
+				if j >= n {
+					return refs
+				}
+				if doc[j] == '>' {
+					j++
+					closed = true
+					break
+				}
+				ns := j
+				for j < n && !isHTMLSpace(doc[j]) && doc[j] != '/' && doc[j] != '>' && doc[j] != '=' {
+					j++
+				}
+				name := asciiLower(doc[ns:j])
+				for j < n && isHTMLSpace(doc[j]) {
+					j++
+				}
+				if j >= n {
+					return refs
+				}
+				if doc[j] != '=' {
+					continue
+				}
+				j++
+				for j < n && isHTMLSpace(doc[j]) {
+					j++
+				}
+				if j >= n {
+					return refs
+				}
+				if q := doc[j]; q == '"' || q == '\'' {
+					end := strings.IndexByte(doc[j+1:], q)
+					if end < 0 {
+						return refs
+					}
+					vs, ve := j+1, j+1+end
+					if name == "src" || (tag == "link" && name == "href") {
+						refs = append(refs, resourceRef{start: vs, end: ve, value: doc[vs:ve]})
+					}
+					j = ve + 1
+				} else {
+					for j < n && !isHTMLSpace(doc[j]) && doc[j] != '>' {
+						j++
+					}
+				}
+			}
+			i = j
+			if rawTextTags[tag] {
+				end := findRawTextEnd(doc, i, tag)
+				if end < 0 {
+					return refs
+				}
+				i = end
+			}
+		default:
+			i++
+		}
+	}
+	return refs
+}
+
+// resourcePath turns a reference into the report path to embed,
+// or ok=false when it is not a local file reference.
+func resourcePath(baseDir, ref string) (p string, ok bool) {
+	v := strings.TrimSpace(html.UnescapeString(ref))
+	if v == "" || strings.HasPrefix(v, "#") || isExternalURL(v) || schemeRegex.MatchString(v) {
+		return "", false
+	}
+	if u, err := url.PathUnescape(v); err == nil {
+		v = u
+	}
+	if isExternalURL(v) || schemeRegex.MatchString(v) {
+		return "", false
+	}
+	p = resolveResource(baseDir, v)
+	if ext := strings.ToLower(path.Ext(p)); ext == ".html" || ext == ".htm" {
+		return "", false
+	}
+	return p, true
+}
+
+// extractResources finds local resource references in HTML.
+func extractResources(doc string) []string {
 	seen := make(map[string]bool)
 	var resources []string
-
-	for _, match := range matches {
-		if len(match) < 2 {
+	for _, ref := range findResourceRefs(doc) {
+		if seen[ref.value] {
 			continue
 		}
-		resource := match[1]
-
-		// Skip external URLs and anything with a scheme (mailto:, tel:, data:, cid:, ...)
-		if isExternalURL(resource) || schemeRegex.MatchString(resource) {
+		if _, ok := resourcePath(".", ref.value); !ok {
 			continue
 		}
-
-		// Skip anchors
-		if strings.HasPrefix(resource, "#") {
-			continue
-		}
-
-		// Never embed HTML pages (e.g. <link rel="canonical" href="report.html">)
-		if ext := strings.ToLower(path.Ext(resource)); ext == ".html" || ext == ".htm" {
-			continue
-		}
-
-		// Deduplicate
-		if seen[resource] {
-			continue
-		}
-		seen[resource] = true
-
-		resources = append(resources, resource)
+		seen[ref.value] = true
+		resources = append(resources, ref.value)
 	}
-
 	return resources
 }
 

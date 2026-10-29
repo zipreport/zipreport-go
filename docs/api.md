@@ -321,7 +321,7 @@ proc := processor.NewMIMEProcessor(
 )
 ```
 
-Subject, From and To are trimmed and must not contain line breaks or other control characters (tabs are allowed; the render fails otherwise); a manifest title used as the default subject has line breaks collapsed. Non-ASCII subjects are encoded automatically; an ASCII subject longer than 989 characters is rejected. Only `src` references and `<link href>` targets that resolve to files in the report are embedded, never `.html`/`.htm` pages; anchor links are left unchanged.
+Subject, From and To are trimmed and must not contain line breaks or other control characters (tabs are allowed; the render fails otherwise); a manifest title used as the default subject has line breaks collapsed. Non-ASCII subjects are encoded automatically; an ASCII subject longer than 989 characters is rejected. Embedded files come from quoted `src` attributes on any element and quoted `href` on `<link>` elements, as an HTML parser reads them: any letter case, with HTML entities and `%XX` escapes decoded before lookup. Values containing `?` or `#`, and unquoted values, are not embedded. Text, `<script>`/`<style>` content and ordinary comments are never scanned; Outlook conditional comments (`<!--[if ...]>`) are. `.html`/`.htm` pages and hidden files are never embedded, anchor links are left unchanged, and `<base href>` is not supported.
 
 ## pkg/fileutils
 

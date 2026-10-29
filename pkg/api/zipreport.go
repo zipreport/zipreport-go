@@ -2,6 +2,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/zipreport/zipreport-go/pkg/processor"
 	"github.com/zipreport/zipreport-go/pkg/report"
 	"github.com/zipreport/zipreport-go/pkg/template"
@@ -19,6 +21,14 @@ func (b *BaseReport) CreateJob(zpt *report.ReportFile) *report.ReportJob {
 
 // Render renders a report job with the given data.
 func (b *BaseReport) Render(job *report.ReportJob, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult {
+	return b.RenderContext(context.Background(), job, data, wrapper)
+}
+
+// RenderContext is Render with a context. Cancelling ctx aborts the request to zipreport-server
+// when the backend implements processor.ContextRenderBackend (ServerBackend does; other backends
+// run to completion). Template rendering itself is not interrupted. The error is reported as
+// text in JobResult.Error.
+func (b *BaseReport) RenderContext(ctx context.Context, job *report.ReportJob, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult {
 	// Render into a private copy so the caller's ReportFile is never modified
 	work := job.GetReport().Clone()
 	job = job.WithReport(work)
@@ -36,12 +46,22 @@ func (b *BaseReport) Render(job *report.ReportJob, data map[string]interface{}, 
 	}
 
 	// Process with backend
+	if p, ok := b.processor.(interface {
+		ProcessContext(context.Context, *report.ReportJob) *report.JobResult
+	}); ok {
+		return p.ProcessContext(ctx, job)
+	}
 	return b.processor.Process(job)
 }
 
 // RenderDefaults renders a report with default job settings.
 func (b *BaseReport) RenderDefaults(zpt *report.ReportFile, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult {
 	return b.Render(b.CreateJob(zpt), data, wrapper)
+}
+
+// RenderDefaultsContext is RenderDefaults with a context; see RenderContext.
+func (b *BaseReport) RenderDefaultsContext(ctx context.Context, zpt *report.ReportFile, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult {
+	return b.RenderContext(ctx, b.CreateJob(zpt), data, wrapper)
 }
 
 // ZipReport provides PDF generation via zipreport-server.
@@ -86,8 +106,10 @@ func NewMIMEReport(opts ...processor.MIMEOption) *MIMEReport {
 // Quick helper functions for common operations
 
 // RenderPDF renders a report to PDF using zipreport-server.
-func RenderPDF(zpt *report.ReportFile, data map[string]interface{}, serverURL, apiKey string) *report.JobResult {
-	client := NewZipReport(serverURL, apiKey)
+// RenderPDF creates a new client per call. A service rendering repeatedly should create one
+// api.ZipReport and reuse it, so connections are reused.
+func RenderPDF(zpt *report.ReportFile, data map[string]interface{}, serverURL, apiKey string, opts ...processor.ServerOption) *report.JobResult {
+	client := NewZipReport(serverURL, apiKey, opts...)
 	return client.RenderDefaults(zpt, data, nil)
 }
 

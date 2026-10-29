@@ -371,6 +371,8 @@ func (b *MyBackend) Render(zpt []byte, opts map[string]interface{}) ([]byte, err
 client := api.NewZipReportWithBackend(&MyBackend{})
 ```
 
+To support cancellation through `RenderContext`, also implement `RenderContext(ctx, zpt, opts)` (`processor.ContextRenderBackend`); otherwise `Render` is called and the context is ignored.
+
 ### Custom File Systems
 
 ```go

@@ -55,6 +55,8 @@ client := &http.Client{Transport: &http.Transport{
 zr := api.NewZipReport(serverURL, apiKey, processor.WithHTTPClient(client))
 ```
 
+From the first release after 1.1.1, also set `CheckRedirect: processor.CheckRedirect` on this client. Without it, Go follows redirects to any host and sends the `X-Auth-Key` header along.
+
 #### Builds fail on any file error
 
 `report.Build`, `report.BuildZipFs` and `zipreport build` used to skip files they could not process. They now fail, and `BuildZipFs` returns a nil `ZipFs`. These are fatal:
@@ -124,7 +126,7 @@ fileutils.MaxUncompressedSize = 2 << 30
 zr := api.NewZipReport(serverURL, apiKey, processor.WithMaxResponseSize(1<<30))
 ```
 
-The entry, name-length and nesting limits are fixed. `api.RenderPDF` takes no options, so its PDF response limit stays at 512 MiB; use `api.NewZipReport` with `WithMaxResponseSize` instead. `MaxUncompressedSize` is process-wide and applies to `api.RenderPDF` too.
+The entry, name-length and nesting limits are fixed. From the first release after 1.1.1, `api.RenderPDF` accepts `processor.WithMaxResponseSize`; on 1.1.x, use `api.NewZipReport`. `MaxUncompressedSize` is process-wide and applies to `api.RenderPDF` too.
 
 #### Renders no longer write into your `ReportFile`
 

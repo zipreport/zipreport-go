@@ -217,6 +217,8 @@ proc := processor.NewZipReportProcessor(backend)
 result := proc.Process(job)
 ```
 
+TLS certificates are **not verified by default** (as in the Python library); pass `processor.WithSecureSSL(true)` to verify them. The default client refuses redirects to another host; a client you pass with `WithHTTPClient` keeps its own redirect policy unless you set `CheckRedirect: processor.CheckRedirect` on it.
+
 ## Dynamic Image Filters
 
 Generate images at render time:

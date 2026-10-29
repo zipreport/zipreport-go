@@ -37,6 +37,12 @@ func (z *ZipReport) Render(job *report.ReportJob, data map[string]interface{}, w
 
 // RenderDefaults renders with default job settings
 func (z *ZipReport) RenderDefaults(zpt *report.ReportFile, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult
+
+// RenderContext is Render with a context; cancelling it aborts the request to zipreport-server
+func (z *ZipReport) RenderContext(ctx context.Context, job *report.ReportJob, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult
+
+// RenderDefaultsContext is RenderDefaults with a context
+func (z *ZipReport) RenderDefaultsContext(ctx context.Context, zpt *report.ReportFile, data map[string]interface{}, wrapper template.EnvironmentWrapper) *report.JobResult
 ```
 
 ### MIMEReport
@@ -61,9 +67,14 @@ client := api.NewMIMEReport(
 // Render to PDF
 result := api.RenderPDF(zpt, data, serverURL, apiKey)
 
+// Same, verifying the server's TLS certificate
+result := api.RenderPDF(zpt, data, serverURL, apiKey, processor.WithSecureSSL(true))
+
 // Render to MIME
 result := api.RenderMIME(zpt, data)
 ```
+
+`RenderPDF` creates a new client per call. A service that renders repeatedly should create one `api.ZipReport` with `api.NewZipReport` and reuse it, so connections are reused.
 
 ## pkg/report
 
@@ -286,12 +297,15 @@ backend := processor.NewServerBackend(url, apiKey,
 backend := processor.NewServerBackend(url, apiKey,
     processor.WithHTTPClient(customClient),
 )
+// set CheckRedirect: processor.CheckRedirect on customClient to keep the API key on the server's host
 
 // Use with ZipReport
 client := api.NewZipReportWithBackend(backend)
 ```
 
-Responses larger than 512 MiB fail with `processor.ErrResponseTooLarge`; raise the limit with `processor.WithMaxResponseSize(n)` (`n <= 0` means the default). `api.RenderPDF` takes no options and always uses the default. `ErrResponseTooLarge` can be matched with `errors.Is` only when calling `ServerBackend.Render` directly; `ZipReport` reports it as text in `JobResult.Error`.
+Responses larger than 512 MiB fail with `processor.ErrResponseTooLarge`; raise the limit with `processor.WithMaxResponseSize(n)` (`n <= 0` means the default). `api.RenderPDF` accepts the same options. `ErrResponseTooLarge` can be matched with `errors.Is` only when calling `ServerBackend.Render` or `RenderContext` directly; `ZipReport` reports it as text in `JobResult.Error`.
+
+The default client refuses redirects when the host, port or hostname spelling changes, and on https to http (`processor.ErrRedirectRefused`). A client given through `WithHTTPClient` keeps its own policy, and Go's default forwards `X-Auth-Key` to the redirect target, so set `CheckRedirect: processor.CheckRedirect` on it.
 
 ### MIMEProcessor
 

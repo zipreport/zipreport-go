@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -530,5 +531,95 @@ func TestBuildZipFs_UnportableNameFails(t *testing.T) {
 	msg := result.Error()
 	if !strings.Contains(msg, "a:b.css") || !strings.Contains(msg, "not a portable file name") {
 		t.Errorf("error = %q, want file name and reason", msg)
+	}
+}
+
+func setMaxUncompressed(t *testing.T, n int64) {
+	t.Helper()
+	old := fileutils.MaxUncompressedSize
+	fileutils.MaxUncompressedSize = n
+	t.Cleanup(func() { fileutils.MaxUncompressedSize = old })
+}
+
+func TestBuildZipFs_OverSizeLimitFails(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	dir := createValidReportDir(t)
+	writeTestFile(t, filepath.Join(dir, "big.bin"), strings.Repeat("x", 2000))
+	zfs, result := BuildZipFs(dir, nil)
+	if zfs != nil {
+		t.Error("BuildZipFs returned a ZipFs over the limit")
+	}
+	if result.Success() {
+		t.Fatal("BuildZipFs succeeded over the limit")
+	}
+	if !strings.Contains(result.Error(), fileutils.ErrZipTooLarge.Error()) {
+		t.Errorf("error = %q, want it to contain %q", result.Error(), fileutils.ErrZipTooLarge.Error())
+	}
+}
+
+func TestBuildZipFs_SkipsRootGenFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		opts *BuildOptions
+	}{
+		{"default options", nil},
+		{"hidden files included", &BuildOptions{ExcludeHidden: false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := createValidReportDir(t)
+			for _, d := range []string{"_gen_dir", "sub"} {
+				if err := os.MkdirAll(filepath.Join(dir, d), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeTestFile(t, filepath.Join(dir, "_gen_7.png"), "p")
+			writeTestFile(t, filepath.Join(dir, "_gen_dir", "x.png"), "p")
+			writeTestFile(t, filepath.Join(dir, "sub", "_gen_ok.png"), "p")
+
+			zfs, result := BuildZipFs(dir, tt.opts)
+			if !result.Success() {
+				t.Fatalf("BuildZipFs failed: %s", result.Error())
+			}
+			for _, name := range []string{"_gen_7.png", "_gen_dir/x.png"} {
+				if zfs.Exists(name) {
+					t.Errorf("%s was packaged", name)
+				}
+			}
+			for _, name := range []string{"sub/_gen_ok.png", "assets/style.css"} {
+				if !zfs.Exists(name) {
+					t.Errorf("%s is missing", name)
+				}
+			}
+		})
+	}
+}
+
+func TestBuild_OverSizeLimitWritesNothing(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	dir := createValidReportDir(t)
+	writeTestFile(t, filepath.Join(dir, "big.bin"), strings.Repeat("x", 2000))
+	dest := filepath.Join(t.TempDir(), "out.zpt")
+	result := Build(dir, dest, nil)
+	if result.Success() {
+		t.Fatal("Build succeeded over the limit")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Errorf("destination was written: stat error = %v", err)
+	}
+}
+
+func TestBuildFromReportFile_OverSizeLimitFails(t *testing.T) {
+	rf, err := LoadDir(createValidReportDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setMaxUncompressed(t, 1024)
+	c := rf.Clone()
+	if err := c.Add("big.bin", []byte(strings.Repeat("x", 2000)), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildFromReportFile(c); !errors.Is(err, fileutils.ErrZipTooLarge) {
+		t.Fatalf("BuildFromReportFile error = %v, want ErrZipTooLarge", err)
 	}
 }

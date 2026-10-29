@@ -144,7 +144,7 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	output, err := renderer.Render(data)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Render error: %v", err), http.StatusInternalServerError)
-		log.Printf("Render error: %v", err)
+		log.Printf("Render error: %s", printable(err.Error()))
 		return
 	}
 

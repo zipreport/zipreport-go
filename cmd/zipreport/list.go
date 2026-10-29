@@ -60,7 +60,7 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Found %d .zpt file(s) in %s:\n", len(zptFiles), dir)
 	for _, f := range zptFiles {
-		fmt.Printf("  %s\n", f)
+		fmt.Printf("  %s\n", printable(f))
 	}
 
 	return nil

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -368,5 +370,33 @@ func TestDebugHandler_CaseVariantOfIndexNotServed(t *testing.T) {
 	}
 	if body := debugGet(t, dir, "/INDEX.HTML"); strings.Contains(body, "{{") {
 		t.Errorf("/INDEX.HTML: body = %q, want the rendered report", body)
+	}
+}
+
+func TestDebugHandler_LogsEscapedRenderError(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"manifest.json": `{"title":"T","author":"A","version":"1","description":"D"}`,
+		"index.html":    "{% extends \"a\x1b[2J.html\" %}",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	rec := httptest.NewRecorder()
+	(&debugHandler{source: dir}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if strings.Contains(logs.String(), "\x1b") {
+		t.Errorf("log contains raw %q", "\x1b")
+	}
+	if want := `parent template a\x1b[2J.html:`; !strings.Contains(logs.String(), want) {
+		t.Errorf("log missing %q", want)
 	}
 }

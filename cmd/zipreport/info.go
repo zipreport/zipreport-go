@@ -33,13 +33,13 @@ func runInfo(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Report: %s\n", filename)
 	fmt.Println(strings.Repeat("-", 40))
-	fmt.Printf("Title:       %s\n", manifest.Title)
-	fmt.Printf("Author:      %s\n", manifest.Author)
-	fmt.Printf("Version:     %s\n", manifest.Version)
-	fmt.Printf("Description: %s\n", manifest.Description)
+	fmt.Printf("Title:       %s\n", printable(manifest.Title))
+	fmt.Printf("Author:      %s\n", printable(manifest.Author))
+	fmt.Printf("Version:     %s\n", printable(manifest.Version))
+	fmt.Printf("Description: %s\n", printable(manifest.Description))
 
 	if len(manifest.Params) > 0 {
-		fmt.Printf("Parameters:  %s\n", strings.Join(manifest.Params, ", "))
+		fmt.Printf("Parameters:  %s\n", printable(strings.Join(manifest.Params, ", ")))
 	} else {
 		fmt.Println("Parameters:  (none)")
 	}
@@ -47,7 +47,7 @@ func runInfo(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Use JS Event: %v\n", manifest.UseJSEvent)
 
 	if manifest.Report != "" {
-		fmt.Printf("Output File: %s\n", manifest.Report)
+		fmt.Printf("Output File: %s\n", printable(manifest.Report))
 	}
 
 	return nil

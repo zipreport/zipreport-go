@@ -20,6 +20,7 @@ Templates are packaged as .zpt files (ZIP archives) containing:
   - manifest.json: Report metadata and configuration
   - index.html: Main Jinja2 template
   - Assets: CSS, JS, images, fonts, etc.`,
+	SilenceErrors: true, // main prints errors once, escaped; cobra would print them raw
 }
 
 func main() {
@@ -28,11 +29,12 @@ func main() {
 		listCmd,
 		infoCmd,
 		debugCmd,
+		renderCmd,
 		versionCmd,
 	)
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, printableError(err.Error()))
 		os.Exit(1)
 	}
 }

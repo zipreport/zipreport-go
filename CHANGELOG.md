@@ -14,11 +14,13 @@ All notable changes to this project are documented here. Versions follow [Semant
 
 - The default client refuses redirects to another host or from https to http (`processor.ErrRedirectRefused`). Before, it sent `X-Auth-Key`, and on 307/308 the report, to the redirect target. Clients passed with `WithHTTPClient` are unchanged; set `CheckRedirect: processor.CheckRedirect` on them.
 - **The debug server and MIME embedding check the file actually read, for folder templates.** A symlink to a dotfile (config.txt -> .env, assets -> .git), a request for //index.html, and on case-insensitive or Windows disks another spelling of a file name (INDEX.HTML, ENV~1) no longer serve or embed hidden files or the raw template. .zpt files are still judged by name.
+- `info`, `list`, the debug server log and all CLI error messages print control, format and invalid UTF-8 characters escaped (`\x1b`), so a crafted `.zpt` cannot inject terminal escape sequences.
 
 ### Changed
 
 - For folder templates, a MIME reference whose case differs from the file name (macOS, Windows) or that uses backslashes (Windows) is no longer embedded, and a symlink into a hidden folder is no longer served or embedded.
 - `zipreport build`/`BuildZipFs` no longer package root-level `_gen_*` files, matching folder renders and `Save()`.
+- Failing commands no longer print the error twice (cobra's `Error:` line is gone; the error is printed once, after the usage text). An unknown command no longer prints the `Run 'zipreport --help' for usage.` hint.
 
 ### Added
 
@@ -26,6 +28,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 - `api.RenderPDF` accepts `...processor.ServerOption`.
 - `fileutils.IsServable`.
 - `ZipFs.CheckLimits()`.
+- `zipreport render` (HTML and MIME, no server needed).
 
 ### Fixed
 

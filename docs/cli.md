@@ -105,6 +105,8 @@ Parameters:  name, items
 Use JS Event: false
 ```
 
+Control and format characters in manifest fields, including non-ASCII spaces such as U+00A0, are shown escaped (for example `\x1b`, `\u00a0`), so a crafted .zpt cannot drive the terminal.
+
 ### list
 
 List .zpt files in a directory.
@@ -125,6 +127,48 @@ zipreport list
 
 # List in specific directory
 zipreport list ./reports
+```
+
+File names are printed with control characters, format characters (U+00A0, joiners) and invalid UTF-8 escaped. The escaping is unconditional, so piping the output into another command (`zipreport list | xargs zipreport info`) does not round-trip such names.
+
+### render
+
+Render a report to HTML or a MIME email, without a zipreport-server.
+
+```bash
+zipreport render <source> [flags]
+```
+
+**Arguments:**
+
+- `source` - Path to a .zpt file or a template directory
+
+**Flags:**
+
+- `-d, --data` - JSON file with template data. Follows the `data.json` rules: a JSON object or `null`; a byte-order mark and an empty file are allowed (no data). Keys override `data.json`.
+- `-f, --format` - Output format: `html` or `mime` (default `html`)
+- `-o, --output` - Output file (default: stdout)
+- `--subject` - MIME Subject header (default: the manifest title)
+- `--from` - MIME From header
+- `--to` - MIME To header; repeatable. A display name containing a comma must be quoted: `--to '"Doe, John" <j@example.com>'`
+
+**Notes:**
+
+- Manifest `params` are required, as in the library: pass them with `--data`.
+- HTML output is the rendered `index.html` only, so relative asset links (`<img src="a.png">`) only resolve next to the template.
+- Exit code is 1 on any error, and nothing is written.
+- Without `-o` the rendered document is written to stdout unmodified, like `cat`. Do not render an untrusted report straight to a terminal.
+- The image filters (`png`, `svg`, ...) cannot be fed from `--data`: they need Go callables or bytes, and JSON gives strings, so they fail with `invalid image generator type`.
+- PDF output needs the library (`api.NewZipReport`).
+
+**Examples:**
+
+```bash
+# HTML to a file
+zipreport render report.zpt -d data.json -o report.html
+
+# MIME email
+zipreport render ./my-template -d data.json -f mime --from a@example.com --to b@example.com -o mail.eml
 ```
 
 ### version

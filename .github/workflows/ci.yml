@@ -30,7 +30,7 @@ jobs:
         run: go build -v ./...
 
       - name: Test with Coverage
-        run: go test -v -coverprofile=coverage.out ./...
+        run: go test -race -v -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         if: matrix.go == 'stable'
@@ -38,6 +38,25 @@ jobs:
         with:
           files: coverage.out
           fail_ci_if_error: false
+
+  test-os:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Test
+        run: go test ./...
 
   lint:
     name: Lint

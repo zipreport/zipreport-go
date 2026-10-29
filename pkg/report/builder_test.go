@@ -516,6 +516,9 @@ func TestBuildZipFs_SymlinkedDirInsideWithFollowFails(t *testing.T) {
 }
 
 func TestBuildZipFs_UnportableNameFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a colon names an NTFS alternate data stream on Windows")
+	}
 	dir := createValidReportDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "a:b.css"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)

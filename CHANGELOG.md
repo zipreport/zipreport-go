@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- **The debug server and MIME embedding check the file actually read, for folder templates.** A symlink to a dotfile (config.txt -> .env, assets -> .git), a request for //index.html, and on case-insensitive or Windows disks another spelling of a file name (INDEX.HTML, ENV~1) no longer serve or embed hidden files or the raw template. .zpt files are still judged by name.
+
+### Changed
+
+- For folder templates, a MIME reference whose case differs from the file name (macOS, Windows) or that uses backslashes (Windows) is no longer embedded, and a symlink into a hidden folder is no longer served or embedded.
+
+### Added
+
+- `fileutils.IsServable`.
+
 ## [1.1.1] - 2026-10-25
 
 ### Fixed

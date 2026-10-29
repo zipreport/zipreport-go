@@ -411,3 +411,52 @@ func TestDiskFs_Snapshot_SizeBounded(t *testing.T) {
 		t.Error("unreadable file was included")
 	}
 }
+
+func TestIsServable_SymlinkToHiddenRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".env"), "SECRET")
+	writeTestFile(t, filepath.Join(dir, ".git", "config"), "SECRET")
+	writeTestFile(t, filepath.Join(dir, "img", "real.png"), "PNG")
+	for link, target := range map[string]string{
+		"config.txt": ".env",
+		"assets":     ".git",
+		"logo.png":   "img/real.png",
+		"dangling":   "missing",
+		"out":        "../x",
+	} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dfs, err := NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"config.txt", "assets/config", "dangling", "out"} {
+		if IsServable(dfs, n) {
+			t.Errorf("IsServable(%q) = true, want false", n)
+		}
+	}
+	for _, n := range []string{"logo.png", "img/real.png"} {
+		if !IsServable(dfs, n) {
+			t.Errorf("IsServable(%q) = false, want true", n)
+		}
+	}
+
+	o := NewOverlayFs(dfs)
+	if err := o.Add("_gen_1.png", []byte("PNG"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Add("config.txt/out.html", []byte("x"), false); err != nil {
+		t.Fatal(err)
+	}
+	if !IsServable(o, "_gen_1.png") {
+		t.Error("overlay file _gen_1.png was not servable")
+	}
+	if IsServable(o, "config.txt") {
+		t.Error("overlay directory config.txt fell through to the hidden symlink and was servable")
+	}
+	if !IsServable(o, "config.txt/out.html") {
+		t.Error("overlay file config.txt/out.html was not servable")
+	}
+}

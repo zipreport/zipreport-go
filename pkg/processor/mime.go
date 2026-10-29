@@ -127,10 +127,10 @@ func (p *MIMEProcessor) buildMIMEMessage(r *report.ReportFile, reportName string
 	var parts []embedded
 	cidByPath := make(map[string]string)
 	cidByRef := make(map[string]string)
-	baseDir := path.Dir(reportName)
+	baseDir := path.Dir(strings.TrimPrefix(reportName, "/"))
 	for _, ref := range resources {
 		resolved := resolveResource(baseDir, ref)
-		if fileutils.IsHiddenPath(resolved) {
+		if !fileutils.IsServable(r.GetFs(), resolved) {
 			continue // never embed hidden files
 		}
 		if cid, ok := cidByPath[resolved]; ok {

@@ -430,3 +430,77 @@ func TestIsHiddenPath(t *testing.T) {
 		}
 	}
 }
+
+func TestIsServable_Names(t *testing.T) {
+	zfs := NewZipFs()
+	for _, n := range []string{"a.css", "css/b.css", ".env", "css/.x"} {
+		if err := zfs.Add(n, []byte("x"), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"a.css", true},
+		{"css/b.css", true},
+		{"", false},
+		{"/a.css", false},
+		{"./a.css", false},
+		{"css//b.css", false},
+		{"css/../a.css", false},
+		{"a.css/", false},
+		{".env", false},
+		{"css/.x", false},
+		{".", false},
+		{"..", false},
+	}
+	for _, tt := range tests {
+		if got := IsServable(zfs, tt.name); got != tt.want {
+			t.Errorf("IsServable(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestIsServable_UnlistedSpellingRefused(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{"ENV~1": "SECRET", "a.css": "body{}"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dfs, err := NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows lists ".env" but opens it as "ENV~1" too
+	if dfs.servable("ENV~1", func(string) ([]string, error) { return []string{".env"}, nil }) {
+		t.Error("unlisted spelling ENV~1 was servable")
+	}
+	if !dfs.servable("ENV~1", readDirNames) {
+		t.Error("listed file ENV~1 was not servable")
+	}
+	if IsServable(dfs, "a.css/x") {
+		t.Error("name below a regular file was servable")
+	}
+}
+
+func TestIsServable_CaseInsensitiveFolder(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "INDEX.HTML")); err != nil {
+		t.Skip("folder is case-sensitive")
+	}
+	dfs, err := NewDiskFs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsServable(dfs, "INDEX.HTML") {
+		t.Error("case variant INDEX.HTML was servable")
+	}
+	if !IsServable(dfs, "index.html") {
+		t.Error("index.html was not servable")
+	}
+}

@@ -111,7 +111,19 @@ if _, err := template.NewMiyaRender(c).Render(data); err != nil {
 result := proc.Process(report.NewReportJob(c))
 ```
 
-Filters added through an `EnvironmentWrapper` that write files into a `ReportFile` they captured write into the original, not the copy; use such filters with `MiyaRender` directly.
+To write files from a custom filter, use a `template.FuncReportWrapper`: it receives the `ReportFile` being rendered (the per-render copy), so files it adds go into the payload sent to the server. An error it returns fails the render. `MIMEReport` embeds only files the rendered HTML references through `src` or `<link href>`, and never one whose name has a hidden (`.`-prefixed) segment. Do not store the report anywhere the wrapper keeps between renders.
+
+```go
+w := template.FuncReportWrapper(func(env *miya.Environment, r *report.ReportFile) error {
+    if r == nil {
+        return nil
+    }
+    return env.AddFilter("note", func(val interface{}, args ...interface{}) (interface{}, error) {
+        return "", r.Add("note.txt", []byte(fmt.Sprint(val)), true)
+    })
+})
+result := client.RenderDefaults(zpt, data, w)
+```
 
 `Save()` and every render ship the report's own `manifest.json`, so changes made through `GetManifest()` are not sent; the in-memory manifest is only used when the report has no `manifest.json`.
 
@@ -266,6 +278,8 @@ wrapper := template.FuncEnvironmentWrapper(func(env *miya.Environment) {
 renderer := template.NewMiyaRender(zpt, template.WithWrapper(wrapper))
 ```
 
+A wrapper that needs the `ReportFile` being rendered, for example to write files from a filter, implements `template.ReportWrapper`; `template.FuncReportWrapper` is the function form. See the example above.
+
 Chaining multiple wrappers:
 
 ```go
@@ -274,6 +288,8 @@ chain.Add(wrapper3)
 
 renderer := template.NewMiyaRender(zpt, template.WithWrapper(chain))
 ```
+
+When `MiyaRender` (and so every `api` render) applies a `ChainedWrapper`, it passes the report to the `ReportWrapper`s inside it, nested chains included. Calling `chain.Configure(env)` yourself, or wrapping a chain in your own type, passes no report: report wrappers there receive `nil`, so a `FuncReportWrapper` should check `r != nil`. A report wrapper's error fails the render; for `api` renders it appears in `JobResult.Error` as text (`template rendering failed: environment wrapper: ...`), not as a wrapped error.
 
 ## pkg/processor
 

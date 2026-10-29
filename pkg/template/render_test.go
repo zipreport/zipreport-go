@@ -502,3 +502,80 @@ func TestMiyaRender_SelfIncludeErrors(t *testing.T) {
 		t.Errorf("err = %v, want ErrMaxRecursion", err)
 	}
 }
+
+var errTestWrapper = errors.New("wrapper failed")
+
+func failingReportWrapper(env *miya.Environment, r *report.ReportFile) error {
+	return errTestWrapper
+}
+
+func recordingReportWrapper(got **report.ReportFile) FuncReportWrapper {
+	return func(env *miya.Environment, r *report.ReportFile) error {
+		if r == nil {
+			return errors.New("report wrapper got nil")
+		}
+		*got = r
+		env.AddGlobal("g", "G")
+		return nil
+	}
+}
+
+func TestMiyaRender_ReportWrapper_Render(t *testing.T) {
+	r := createTestReportForRender()
+	_ = r.Add("index.html", []byte("{{ g }}-{{ name }}"), true)
+	var got *report.ReportFile
+	out, err := NewMiyaRender(r, WithWrapper(recordingReportWrapper(&got))).Render(map[string]interface{}{"name": "n"})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if got != r {
+		t.Errorf("wrapper got %p, want %p", got, r)
+	}
+	if out != "G-n" {
+		t.Errorf("output %q, want G-n", out)
+	}
+}
+
+func TestMiyaRender_ReportWrapper_RenderString(t *testing.T) {
+	r := createTestReportForRender()
+	var got *report.ReportFile
+	out, err := NewMiyaRender(r, WithWrapper(recordingReportWrapper(&got))).RenderString("{{ g }}", nil)
+	if err != nil {
+		t.Fatalf("RenderString error: %v", err)
+	}
+	if got != r {
+		t.Errorf("wrapper got %p, want %p", got, r)
+	}
+	if out != "G" {
+		t.Errorf("output %q, want G", out)
+	}
+}
+
+func TestMiyaRender_ReportWrapperError_Render(t *testing.T) {
+	r := createTestReportForRender()
+	_, err := NewMiyaRender(r, WithWrapper(FuncReportWrapper(failingReportWrapper))).Render(map[string]interface{}{"name": "n"})
+	if !errors.Is(err, errTestWrapper) {
+		t.Errorf("err = %v, want errTestWrapper", err)
+	}
+}
+
+func TestMiyaRender_ReportWrapperError_RenderString(t *testing.T) {
+	r := createTestReportForRender()
+	_, err := NewMiyaRender(r, WithWrapper(FuncReportWrapper(failingReportWrapper))).RenderString("x", nil)
+	if !errors.Is(err, errTestWrapper) {
+		t.Errorf("err = %v, want errTestWrapper", err)
+	}
+}
+
+func TestMiyaRender_PlainWrapperStillConfigured(t *testing.T) {
+	r := createTestReportForRender()
+	_ = r.Add("index.html", []byte("{{ p }}-{{ name }}"), true)
+	w := FuncEnvironmentWrapper(func(env *miya.Environment) { env.AddGlobal("p", "P") })
+	out, err := NewMiyaRender(r, WithWrapper(w)).Render(map[string]interface{}{"name": "n"})
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if out != "P-n" {
+		t.Errorf("output %q, want P-n", out)
+	}
+}

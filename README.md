@@ -209,9 +209,6 @@ Backend abstraction for rendering:
 // Server backend (zipreport-server)
 backend := processor.NewServerBackend(url, apiKey)
 
-// Future: local backend
-backend := processor.NewLocalBackend()
-
 // Create processor
 proc := processor.NewZipReportProcessor(backend)
 result := proc.Process(job)

@@ -31,6 +31,12 @@ All notable changes to this project are documented here. Versions follow [Semant
 - `fileutils.IsServable`.
 - `ZipFs.CheckLimits()`.
 - `zipreport render` (HTML and MIME, no server needed).
+- `template.ReportWrapper` / `template.FuncReportWrapper`: wrappers that receive the `ReportFile` being rendered (the per-render copy), also inside a `ChainedWrapper`. Their error fails the render (`errors.Is` works with `MiyaRender`; `api` renders report it as text in `JobResult.Error`).
+
+### Deprecated
+
+- `processor.LocalBackend`, `LocalOption`, `WithChromePath`, `WithLocalTimeout` and `NewLocalBackend`: not implemented; use `ServerBackend`. Removal in v2.
+- `report.ReportFile.GetParam`: read the field from `GetManifest()`. Removal in v2.
 
 ### Fixed
 

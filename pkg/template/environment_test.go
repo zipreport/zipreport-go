@@ -1,9 +1,11 @@
 package template
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/zipreport/miya"
+	"github.com/zipreport/zipreport-go/pkg/report"
 )
 
 func TestFuncEnvironmentWrapper(t *testing.T) {
@@ -88,4 +90,81 @@ func TestChainedWrapper_Empty(t *testing.T) {
 
 	// Should not panic with empty chain
 	chain.Configure(env)
+}
+
+func TestChainedWrapper_ForwardsReport(t *testing.T) {
+	r := createTestReportForRender()
+	var got *report.ReportFile
+	runs := 0
+	plain := FuncEnvironmentWrapper(func(env *miya.Environment) { runs++ })
+	_, err := NewMiyaRender(r, WithWrapper(NewChainedWrapper(plain, recordingReportWrapper(&got)))).RenderString("x", nil)
+	if err != nil {
+		t.Fatalf("RenderString error: %v", err)
+	}
+	if runs != 1 {
+		t.Errorf("plain wrapper ran %d times, want 1", runs)
+	}
+	if got != r {
+		t.Errorf("report wrapper got %p, want %p", got, r)
+	}
+}
+
+func TestChainedWrapper_NestedForwardsReport(t *testing.T) {
+	r := createTestReportForRender()
+	var got *report.ReportFile
+	w := NewChainedWrapper(NewChainedWrapper(recordingReportWrapper(&got)))
+	if _, err := NewMiyaRender(r, WithWrapper(w)).RenderString("x", nil); err != nil {
+		t.Fatalf("RenderString error: %v", err)
+	}
+	if got != r {
+		t.Errorf("nested report wrapper got %p, want %p", got, r)
+	}
+}
+
+type embeddingChain struct{ *ChainedWrapper }
+
+func (c embeddingChain) Configure(env *miya.Environment) {
+	env.AddGlobal("e", "E")
+	c.ChainedWrapper.Configure(env)
+}
+
+func TestChainedWrapper_EmbedderConfigureStillCalled(t *testing.T) {
+	r := createTestReportForRender()
+	out, err := NewMiyaRender(r, WithWrapper(embeddingChain{NewChainedWrapper()})).RenderString("{{ e }}", nil)
+	if err != nil {
+		t.Fatalf("RenderString error: %v", err)
+	}
+	if out != "E" {
+		t.Errorf("output %q, want E", out)
+	}
+}
+
+func TestChainedWrapper_StopsAtFirstError(t *testing.T) {
+	r := createTestReportForRender()
+	laterRan := false
+	later := FuncEnvironmentWrapper(func(env *miya.Environment) { laterRan = true })
+	_, err := NewMiyaRender(r, WithWrapper(NewChainedWrapper(FuncReportWrapper(failingReportWrapper), later))).RenderString("x", nil)
+	if !errors.Is(err, errTestWrapper) {
+		t.Errorf("err = %v, want errTestWrapper", err)
+	}
+	if laterRan {
+		t.Error("wrapper after the failing one ran")
+	}
+}
+
+func TestFuncReportWrapper_ConfigureNilReport(t *testing.T) {
+	got := &report.ReportFile{}
+	called := false
+	fn := func(env *miya.Environment, r *report.ReportFile) error {
+		called = true
+		got = r
+		return errTestWrapper
+	}
+	FuncReportWrapper(fn).Configure(miya.NewEnvironment())
+	if !called {
+		t.Error("function not called")
+	}
+	if got != nil {
+		t.Errorf("got %p, want nil report", got)
+	}
 }

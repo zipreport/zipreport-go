@@ -119,7 +119,7 @@ Filters added through an `EnvironmentWrapper` that write files into a `ReportFil
 
 A `data.json` in the report supplies default data. It must contain a JSON object (empty files and `null` are treated as no data; a UTF-8 byte-order mark is allowed); anything else makes every render fail with `invalid data.json`.
 
-Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such paths fail with fileutils.ErrOutsideFolder (`LoadDir` names the file); includes and assets that resolve outside are not found. A broken symlink is rejected even if it points inside the folder. Containment is checked when a path is resolved, then the file is opened; a folder that an untrusted party can modify at the same time can race that check, so do not render from such a folder. Symlinks inside the folder are followed. `manifest.json`'s `report` must be a relative path inside the report. A leading "/" in manifest.json's report is ignored.
+Folder templates are contained: no read or write may leave the template folder, either through `..` or through a symlink that resolves outside it. Such paths fail with fileutils.ErrOutsideFolder (`LoadDir` names the file); includes and assets that resolve outside are not found. A broken symlink is rejected even if it points inside the folder. Containment is checked when a path is resolved, then the file is opened; a folder that an untrusted party can modify at the same time can race that check, so do not render from such a folder. Symlinks inside the folder are followed. The debug server and MIME embedding refuse a symlink whose target is hidden. `manifest.json`'s `report` must be a relative path inside the report. A leading "/" in manifest.json's report is ignored.
 
 ### ReportFile
 
@@ -377,6 +377,8 @@ content, err := o.GetBytes("index.html") // read from base
 ```
 
 `DiskFs.Snapshot()` copies a folder into a new `ZipFs` (hidden entries, root-level `_gen_*` files, special files, broken symlinks, unreadable files and symlinks leaving the folder are skipped; unportable names fail).
+
+`fileutils.IsServable(fs, name)` reports whether a name may be handed to a client; the debug server and MIME embedding use it. The name must be canonical (relative, slash-separated, unchanged by `path.Clean`) with no hidden segment. On a folder on disk, every segment must also be spelled exactly as the folder lists it, and the file the name resolves to, symlinks followed, must have no hidden segment inside the folder. `ZipFs` and custom file systems are judged by name only.
 
 ## Complete Example
 

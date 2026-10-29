@@ -687,3 +687,23 @@ func TestMIMEProcessor_SubjectLengthBoundary(t *testing.T) {
 		t.Errorf("expected subject too long, got success=%v err=%q", result.Success, result.Error)
 	}
 }
+
+func TestMIMEProcessor_LeadingSlashReportName(t *testing.T) {
+	r := newTestReport(map[string]string{
+		"sub/out.html": `<img src="logo.png">`,
+		"sub/logo.png": "PNG",
+	}, &report.Manifest{Title: "T", Report: "/sub/out.html"})
+	result := processMIME(r)
+	if !result.Success {
+		t.Fatalf("Process failed: %s", result.Error)
+	}
+	parts := mimeParts(t, result.Report)
+	if n := len(parts); n != 2 {
+		t.Errorf("parts = %d, want 2", n)
+	}
+	for k, v := range parts {
+		if k != "html" && string(v) != "PNG" {
+			t.Errorf("part %s = %q, want PNG", k, v)
+		}
+	}
+}

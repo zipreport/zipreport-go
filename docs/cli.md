@@ -74,7 +74,7 @@ The debug server:
 
 - Reloads the template on each request (no restart needed)
 - Serves static assets (CSS, JS, images)
-- Never serves hidden files (names starting with a dot)
+- Never serves hidden files: a name with a segment starting with a dot, a symlink to one, or a spelling the folder does not list (another case, a Windows short name); a request for index.html, in any such spelling, is always rendered
 - Uses data from `data.json` if present
 - Shows render errors in the browser
 - Has no authentication: only bind to other interfaces on trusted networks

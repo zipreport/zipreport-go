@@ -12,11 +12,17 @@ All notable changes to this project are documented here. Versions follow [Semant
 ### Security
 
 - The default client refuses redirects to another host or from https to http (`processor.ErrRedirectRefused`). Before, it sent `X-Auth-Key`, and on 307/308 the report, to the redirect target. Clients passed with `WithHTTPClient` are unchanged; set `CheckRedirect: processor.CheckRedirect` on them.
+- **The debug server and MIME embedding check the file actually read, for folder templates.** A symlink to a dotfile (config.txt -> .env, assets -> .git), a request for //index.html, and on case-insensitive or Windows disks another spelling of a file name (INDEX.HTML, ENV~1) no longer serve or embed hidden files or the raw template. .zpt files are still judged by name.
+
+### Changed
+
+- For folder templates, a MIME reference whose case differs from the file name (macOS, Windows) or that uses backslashes (Windows) is no longer embedded, and a symlink into a hidden folder is no longer served or embedded.
 
 ### Added
 
 - `RenderContext` / `RenderDefaultsContext` / `ZipReportProcessor.ProcessContext` / `ServerBackend.RenderContext` / `processor.ContextRenderBackend` / `processor.CheckRedirect`.
 - `api.RenderPDF` accepts `...processor.ServerOption`.
+- `fileutils.IsServable`.
 
 ### Fixed
 

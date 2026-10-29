@@ -76,6 +76,74 @@ func IsHiddenPath(name string) bool {
 	return false
 }
 
+// IsServable reports whether name may be handed to a client such as the debug server or a MIME part.
+// name must be canonical (relative, slash-separated, unchanged by path.Clean) with no hidden segment.
+// On a folder on disk, every segment must also be spelled exactly as the folder lists it, and the
+// file it resolves to, symlinks followed, must have no hidden segment inside the folder.
+// Files written to an OverlayFs are judged by name; any other file system (ZipFs, custom) by name only.
+func IsServable(fs FsInterface, name string) bool {
+	if name == "" || path.IsAbs(name) || path.Clean(name) != name || IsHiddenPath(name) {
+		return false
+	}
+	switch f := fs.(type) {
+	case *OverlayFs:
+		if f.Overlay().Exists(name) && !f.Overlay().IsDir(name) {
+			return true
+		}
+		return IsServable(f.Base(), name)
+	case *DiskFs:
+		return f.servable(name, readDirNames)
+	default:
+		return true
+	}
+}
+
+// readDirNames lists the entry names of dir.
+func readDirNames(dir string) ([]string, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.Readdirnames(-1)
+}
+
+// servable walks name one listed entry at a time, then checks where it resolves.
+// list is readDirNames except in tests, which simulate names the OS opens but does not list.
+func (dfs *DiskFs) servable(name string, list func(string) ([]string, error)) bool {
+	dir := dfs.basePath
+	for _, seg := range strings.Split(name, "/") {
+		names, err := list(dir)
+		if err != nil {
+			return false
+		}
+		found := false
+		for _, n := range names {
+			if n == seg {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+		dir = filepath.Join(dir, seg)
+	}
+	root, err := filepath.EvalSymlinks(dfs.basePath)
+	if err != nil {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil || !filepath.IsLocal(rel) {
+		return false
+	}
+	return !IsHiddenPath(filepath.ToSlash(rel))
+}
+
 // checkResolved fails when absPath, or its deepest existing ancestor, resolves
 // outside the base directory once symlinks are followed. A dangling symlink is
 // rejected because its target cannot be checked.

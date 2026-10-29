@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zipreport/zipreport-go/pkg/fileutils"
 )
 
 func TestDebugHandler_DoesNotWriteToSource(t *testing.T) {
@@ -309,5 +311,62 @@ func TestGetContentType(t *testing.T) {
 		if got := getContentType(ext); got != want {
 			t.Errorf("getContentType(%q) = %q, want %q", ext, got, want)
 		}
+	}
+}
+
+// debugGet requests p (set verbatim, uncleaned) from a debug handler for source
+func debugGet(t *testing.T, source, p string) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.URL.Path = p
+	rec := httptest.NewRecorder()
+	(&debugHandler{source: source}).ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("%s: status = %d, body = %q", p, rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+func TestDebugHandler_IndexSourceNeverServed(t *testing.T) {
+	const tmpl = `{{ "REN" ~ "DERED" }}`
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(tmpl), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	z := fileutils.NewZipFs()
+	if err := z.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := z.Add("index.html", []byte(tmpl), false); err != nil {
+		t.Fatal(err)
+	}
+	zpt := filepath.Join(t.TempDir(), "r.zpt")
+	if err := z.SaveToFile(zpt); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, source := range []string{dir, zpt} {
+		for _, p := range []string{"/index.html", "//index.html", "/./index.html"} {
+			body := debugGet(t, source, p)
+			if !strings.Contains(body, "RENDERED") || strings.Contains(body, "{{") {
+				t.Errorf("%s %s: body = %q, want the rendered report", filepath.Base(source), p, body)
+			}
+		}
+	}
+}
+
+func TestDebugHandler_CaseVariantOfIndexNotServed(t *testing.T) {
+	dir := t.TempDir()
+	writeDebugTemplate(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(`{{ "REN" ~ "DERED" }}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "INDEX.HTML")); err != nil {
+		t.Skip("folder is case-sensitive")
+	}
+	if body := debugGet(t, dir, "/INDEX.HTML"); strings.Contains(body, "{{") {
+		t.Errorf("/INDEX.HTML: body = %q, want the rendered report", body)
 	}
 }

@@ -123,7 +123,7 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Handle static assets
 	name := strings.TrimPrefix(r.URL.Path, "/")
-	if name != "" && name != "index.html" && !fileutils.IsHiddenPath(name) {
+	if name != report.FileIndex && fileutils.IsServable(zpt.GetFs(), name) {
 		// Try to serve as static file
 		content, err := zpt.GetBytes(name)
 		if err == nil {

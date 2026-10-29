@@ -91,13 +91,10 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 		if err != nil {
 			return err
 		}
-		content, err := io.ReadAll(io.LimitReader(rc, saturatingInc(remaining)))
+		content, err := readAtMost(rc, remaining)
 		rc.Close()
 		if err != nil {
 			return err
-		}
-		if int64(len(content)) > remaining {
-			return ErrZipTooLarge
 		}
 		remaining -= int64(len(content))
 
@@ -105,6 +102,18 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 		zfs.cache.Add(name, false)
 	}
 	return nil
+}
+
+// readAtMost reads r to EOF, returning ErrZipTooLarge without reading further once more than limit bytes arrive.
+func readAtMost(r io.Reader, limit int64) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(r, saturatingInc(limit)))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > limit {
+		return nil, ErrZipTooLarge
+	}
+	return content, nil
 }
 
 // saturatingInc returns n+1, or n when n+1 would overflow.

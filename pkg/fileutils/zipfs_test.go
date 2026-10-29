@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -566,6 +567,113 @@ func TestNewZipFsFromBytes_TooLarge(t *testing.T) {
 	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
 		t.Fatalf("expected ErrZipTooLarge, got %v", err)
 	}
+}
+
+type forgedEntry struct {
+	name     string
+	content  []byte
+	declared uint64
+}
+
+// zipWithDeclaredSizes builds a ZIP whose entries declare an uncompressed size different from what they store.
+func zipWithDeclaredSizes(t *testing.T, entries ...forgedEntry) []byte {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	w := zip.NewWriter(buf)
+	for _, e := range entries {
+		f, err := w.CreateRaw(&zip.FileHeader{
+			Name:               e.name,
+			Method:             zip.Store,
+			CRC32:              crc32.ChecksumIEEE(e.content),
+			CompressedSize64:   uint64(len(e.content)),
+			UncompressedSize64: e.declared,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(e.content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestNewZipFsFromBytes_DeclaredSizeRejectedBeforeReading(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWithDeclaredSizes(t, forgedEntry{"a.txt", []byte("tiny"), 1025})
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+// Each entry fits alone, so this pins that the pre-check sums declared sizes rather than checking each entry.
+// Without it, a per-entry pre-check passes the whole suite.
+func TestNewZipFsFromBytes_DeclaredSizesSumPastLimit(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWithDeclaredSizes(t,
+		forgedEntry{"a.txt", []byte("tiny"), 600},
+		forgedEntry{"b.txt", []byte("tiny"), 600},
+	)
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+// The declared sizes sum to 5 after wrapping, so only the overflow guard rejects them.
+func TestNewZipFsFromBytes_DeclaredSizeOverflow(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWithDeclaredSizes(t,
+		forgedEntry{"a.txt", []byte("0123456789"), 10},
+		forgedEntry{"b.txt", []byte("tiny"), ^uint64(0) - 4},
+	)
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+var errReadPastLimit = errors.New("read past limit")
+
+// endlessReader yields bytes until max, then fails, so a missing limit fails fast instead of exhausting memory.
+type endlessReader struct{ read, max int64 }
+
+func (r *endlessReader) Read(p []byte) (int, error) {
+	if r.read >= r.max {
+		return 0, errReadPastLimit
+	}
+	n := min(int64(len(p)), r.max-r.read)
+	for i := range p[:n] {
+		p[i] = 'x'
+	}
+	r.read += n
+	return int(n), nil
+}
+
+func TestReadAtMost(t *testing.T) {
+	t.Run("at limit", func(t *testing.T) {
+		got, err := readAtMost(bytes.NewReader(bytes.Repeat([]byte("x"), 1024)), 1024)
+		if err != nil || len(got) != 1024 {
+			t.Fatalf("got len=%d err=%v, want len=1024 err=nil", len(got), err)
+		}
+	})
+	t.Run("one byte over", func(t *testing.T) {
+		got, err := readAtMost(bytes.NewReader(bytes.Repeat([]byte("x"), 1025)), 1024)
+		if !errors.Is(err, ErrZipTooLarge) || got != nil {
+			t.Fatalf("got len=%d err=%v, want nil slice and ErrZipTooLarge", len(got), err)
+		}
+	})
+	t.Run("stops reading", func(t *testing.T) {
+		r := &endlessReader{max: 1 << 20}
+		_, err := readAtMost(r, 1024)
+		if !errors.Is(err, ErrZipTooLarge) {
+			t.Errorf("err = %v, want ErrZipTooLarge", err)
+		}
+		if r.read > 1025 {
+			t.Errorf("read %d bytes, want at most 1025", r.read)
+		}
+	})
 }
 
 func TestNewZipFsFromBytes_AtLimit(t *testing.T) {

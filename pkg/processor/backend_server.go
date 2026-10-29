@@ -2,6 +2,7 @@ package processor
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -24,6 +25,25 @@ const maxErrorBodySize = 1024
 
 // ErrResponseTooLarge is returned when the server response exceeds the configured limit.
 var ErrResponseTooLarge = errors.New("response exceeds size limit")
+
+// ErrRedirectRefused is returned when the server redirects to another host or from https to http.
+var ErrRedirectRefused = errors.New("redirect refused")
+
+// CheckRedirect is an http.Client.CheckRedirect policy that follows redirects only within
+// the original host (same host and port), and never from https to http, so the API key and
+// report never leave it. The default client uses it; set it on a client passed to WithHTTPClient.
+func CheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	first := via[0].URL
+	if req.URL.Host != first.Host || (first.Scheme == "https" && req.URL.Scheme != "https") {
+		return fmt.Errorf("%w: %s to %s", ErrRedirectRefused, first.Redacted(), req.URL.Redacted())
+	}
+	return nil
+}
+
+var _ ContextRenderBackend = (*ServerBackend)(nil)
 
 // ServerBackend renders PDFs via zipreport-server HTTP API.
 type ServerBackend struct {
@@ -50,6 +70,8 @@ func WithAPIVersion(version int) ServerOption {
 
 // WithHTTPClient sets a custom HTTP client. The client is used as given:
 // WithSecureSSL has no effect on it, and WithTimeout applies to a copy.
+// Its redirect policy is used too: Go's default forwards custom headers such as X-Auth-Key
+// to any redirect target; set its CheckRedirect field to processor.CheckRedirect to prevent that.
 func WithHTTPClient(client *http.Client) ServerOption {
 	return func(b *ServerBackend) {
 		b.httpClient = client
@@ -111,7 +133,8 @@ func NewServerBackend(url, apiKey string, opts ...ServerOption) *ServerBackend {
 
 	// Always set TLSClientConfig: a non-nil value keeps both modes on HTTP/1.1, as before
 	b.httpClient = &http.Client{
-		Timeout: b.timeout,
+		Timeout:       b.timeout,
+		CheckRedirect: CheckRedirect,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: !b.secureSSL},
 		},
@@ -121,6 +144,11 @@ func NewServerBackend(url, apiKey string, opts ...ServerOption) *ServerBackend {
 
 // Render sends the ZPT to zipreport-server and returns the PDF.
 func (b *ServerBackend) Render(zptData []byte, options map[string]interface{}) ([]byte, error) {
+	return b.RenderContext(context.Background(), zptData, options)
+}
+
+// RenderContext is Render with a context; cancelling ctx aborts the request. The client timeout still applies.
+func (b *ServerBackend) RenderContext(ctx context.Context, zptData []byte, options map[string]interface{}) ([]byte, error) {
 	// Build multipart request
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -155,8 +183,8 @@ func (b *ServerBackend) Render(zptData []byte, options map[string]interface{}) (
 	}
 
 	// Build request
-	endpoint := fmt.Sprintf("%s/v%d/render", b.url, b.apiVersion)
-	req, err := http.NewRequest(http.MethodPost, endpoint, body)
+	endpoint := fmt.Sprintf("%s/v%d/render", strings.TrimRight(b.url, "/"), b.apiVersion)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

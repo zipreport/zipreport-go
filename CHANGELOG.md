@@ -4,8 +4,14 @@ All notable changes to this project are documented here. Versions follow [Semant
 
 ## [Unreleased]
 
+### Upgrading
+
+- **The default client refuses redirects to another host.** A deployment where zipreport-server answers with a redirect to another host, another port, or another spelling of the hostname (including an explicit default port such as `:80`) now fails with `processor.ErrRedirectRefused`. Point the URL at the final host.
+- **`api.RenderPDF` has a new signature** (`opts ...processor.ServerOption`). Calls still compile; code that stores `api.RenderPDF` in a variable whose type spells out the old func type does not.
+
 ### Security
 
+- The default client refuses redirects to another host or from https to http (`processor.ErrRedirectRefused`). Before, it sent `X-Auth-Key`, and on 307/308 the report, to the redirect target. Clients passed with `WithHTTPClient` are unchanged; set `CheckRedirect: processor.CheckRedirect` on them.
 - **The debug server and MIME embedding check the file actually read, for folder templates.** A symlink to a dotfile (config.txt -> .env, assets -> .git), a request for //index.html, and on case-insensitive or Windows disks another spelling of a file name (INDEX.HTML, ENV~1) no longer serve or embed hidden files or the raw template. .zpt files are still judged by name.
 
 ### Changed
@@ -14,7 +20,13 @@ All notable changes to this project are documented here. Versions follow [Semant
 
 ### Added
 
+- `RenderContext` / `RenderDefaultsContext` / `ZipReportProcessor.ProcessContext` / `ServerBackend.RenderContext` / `processor.ContextRenderBackend` / `processor.CheckRedirect`.
+- `api.RenderPDF` accepts `...processor.ServerOption`.
 - `fileutils.IsServable`.
+
+### Fixed
+
+- A trailing `/` in the server URL no longer produces `//v2/render`.
 
 ## [1.1.1] - 2026-10-25
 

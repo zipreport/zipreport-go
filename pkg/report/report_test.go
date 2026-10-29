@@ -610,3 +610,17 @@ func TestBuildFromReportFile_UnreadableIndexFails(t *testing.T) {
 		t.Error("zfs should be nil")
 	}
 }
+
+func TestReportFile_Clone_SaveOverLimitFails(t *testing.T) {
+	dir := createValidReportDir(t)
+	rf, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setMaxUncompressed(t, 1024)
+	c := rf.Clone()
+	_ = c.Add("report.html", bytes.Repeat([]byte("x"), 2000), true)
+	if _, err := c.Save(); !errors.Is(err, fileutils.ErrZipTooLarge) {
+		t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+	}
+}

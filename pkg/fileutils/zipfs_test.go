@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -568,6 +569,113 @@ func TestNewZipFsFromBytes_TooLarge(t *testing.T) {
 	}
 }
 
+type forgedEntry struct {
+	name     string
+	content  []byte
+	declared uint64
+}
+
+// zipWithDeclaredSizes builds a ZIP whose entries declare an uncompressed size different from what they store.
+func zipWithDeclaredSizes(t *testing.T, entries ...forgedEntry) []byte {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	w := zip.NewWriter(buf)
+	for _, e := range entries {
+		f, err := w.CreateRaw(&zip.FileHeader{
+			Name:               e.name,
+			Method:             zip.Store,
+			CRC32:              crc32.ChecksumIEEE(e.content),
+			CompressedSize64:   uint64(len(e.content)),
+			UncompressedSize64: e.declared,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(e.content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestNewZipFsFromBytes_DeclaredSizeRejectedBeforeReading(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWithDeclaredSizes(t, forgedEntry{"a.txt", []byte("tiny"), 1025})
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+// Each entry fits alone, so this pins that the pre-check sums declared sizes rather than checking each entry.
+// Without it, a per-entry pre-check passes the whole suite.
+func TestNewZipFsFromBytes_DeclaredSizesSumPastLimit(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWithDeclaredSizes(t,
+		forgedEntry{"a.txt", []byte("tiny"), 600},
+		forgedEntry{"b.txt", []byte("tiny"), 600},
+	)
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+// The declared sizes sum to 5 after wrapping, so only the overflow guard rejects them.
+func TestNewZipFsFromBytes_DeclaredSizeOverflow(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	data := zipWithDeclaredSizes(t,
+		forgedEntry{"a.txt", []byte("0123456789"), 10},
+		forgedEntry{"b.txt", []byte("tiny"), ^uint64(0) - 4},
+	)
+	if _, err := NewZipFsFromBytes(data); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("expected ErrZipTooLarge, got %v", err)
+	}
+}
+
+var errReadPastLimit = errors.New("read past limit")
+
+// endlessReader yields bytes until max, then fails, so a missing limit fails fast instead of exhausting memory.
+type endlessReader struct{ read, max int64 }
+
+func (r *endlessReader) Read(p []byte) (int, error) {
+	if r.read >= r.max {
+		return 0, errReadPastLimit
+	}
+	n := min(int64(len(p)), r.max-r.read)
+	for i := range p[:n] {
+		p[i] = 'x'
+	}
+	r.read += n
+	return int(n), nil
+}
+
+func TestReadAtMost(t *testing.T) {
+	t.Run("at limit", func(t *testing.T) {
+		got, err := readAtMost(bytes.NewReader(bytes.Repeat([]byte("x"), 1024)), 1024)
+		if err != nil || len(got) != 1024 {
+			t.Fatalf("got len=%d err=%v, want len=1024 err=nil", len(got), err)
+		}
+	})
+	t.Run("one byte over", func(t *testing.T) {
+		got, err := readAtMost(bytes.NewReader(bytes.Repeat([]byte("x"), 1025)), 1024)
+		if !errors.Is(err, ErrZipTooLarge) || got != nil {
+			t.Fatalf("got len=%d err=%v, want nil slice and ErrZipTooLarge", len(got), err)
+		}
+	})
+	t.Run("stops reading", func(t *testing.T) {
+		r := &endlessReader{max: 1 << 20}
+		_, err := readAtMost(r, 1024)
+		if !errors.Is(err, ErrZipTooLarge) {
+			t.Errorf("err = %v, want ErrZipTooLarge", err)
+		}
+		if r.read > 1025 {
+			t.Errorf("read %d bytes, want at most 1025", r.read)
+		}
+	})
+}
+
 func TestNewZipFsFromBytes_AtLimit(t *testing.T) {
 	setMaxUncompressed(t, 1024)
 	content := bytes.Repeat([]byte("a"), 1024)
@@ -706,6 +814,116 @@ func TestNewZipFsFromBytes_NameLimits(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestZipFsSave_OverSizeLimitFails(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	zfs := NewZipFs()
+	_ = zfs.Add("a.txt", bytes.Repeat([]byte("x"), 600), false)
+	_ = zfs.Add("b.txt", bytes.Repeat([]byte("x"), 600), false)
+	data, err := zfs.Save()
+	if !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+	}
+	if data != nil {
+		t.Error("Save() returned data on error")
+	}
+}
+
+func TestZipFsSave_TooManyEntriesFails(t *testing.T) {
+	zfs := NewZipFs()
+	for i := 0; i < maxZipEntries+1; i++ {
+		_ = zfs.Add(fmt.Sprintf("f%d", i), nil, false)
+	}
+	if _, err := zfs.Save(); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+	}
+}
+
+func TestZipFsSave_AtSizeLimitLoads(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	zfs := NewZipFs()
+	_ = zfs.Add("a.txt", bytes.Repeat([]byte("x"), 1024), false)
+	data, err := zfs.Save()
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if _, err := NewZipFsFromBytes(data); err != nil {
+		t.Errorf("saved data does not load: %v", err)
+	}
+}
+
+func TestZipFsSave_ZeroLimitMeansDefault(t *testing.T) {
+	setMaxUncompressed(t, 0)
+	zfs := NewZipFs()
+	_ = zfs.Add("a.txt", []byte("x"), false)
+	if _, err := zfs.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+}
+
+func TestZipFsSave_FoldersCountAsEntries(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		ok     bool
+	}{
+		{"one folder, 10000 entries", "d/", true},
+		{"two folders, 10001 entries", "d/e/", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			zfs := NewZipFs()
+			for i := 0; i < maxZipEntries-1; i++ {
+				_ = zfs.Add(fmt.Sprintf("%sf%d", tt.prefix, i), nil, false)
+			}
+			data, err := zfs.Save()
+			if !tt.ok {
+				if !errors.Is(err, ErrZipTooLarge) {
+					t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if _, err := NewZipFsFromBytes(data); err != nil {
+				t.Errorf("saved data does not load: %v", err)
+			}
+		})
+	}
+}
+
+func TestZipFsSave_NameLimits(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		ok   bool
+	}{
+		{"32 levels", strings.Repeat("a/", 32) + "f", true},
+		{"33 levels", strings.Repeat("a/", 33) + "f", false},
+		{"1024-byte name", strings.Repeat("n", 1024), true},
+		{"1025-byte name", strings.Repeat("n", 1025), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			zfs := NewZipFs()
+			_ = zfs.Add(tt.file, []byte("x"), false)
+			data, err := zfs.Save()
+			if !tt.ok {
+				if !errors.Is(err, ErrZipTooLarge) {
+					t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if _, err := NewZipFsFromBytes(data); err != nil {
+				t.Errorf("saved data does not load: %v", err)
 			}
 		})
 	}

@@ -115,7 +115,7 @@ Filters added through an `EnvironmentWrapper` that write files into a `ReportFil
 
 `Save()` and every render ship the report's own `manifest.json`, so changes made through `GetManifest()` are not sent; the in-memory manifest is only used when the report has no `manifest.json`.
 
-`Save()` on a folder-loaded report packages every readable, non-hidden file in the folder (unreadable files and broken symlinks are skipped). A file name that is not portable inside a ZIP (a ".." segment, a drive-letter prefix such as "a:", or a leading backslash) fails Save() with fileutils.ErrUnportableName. It skips root-level `_gen_*` files left by older versions, and it fails if `index.html` is missing or the folder is nested deeper than 32 levels. It also fails with `fileutils.ErrZipTooLarge` past 10,000 files and folders (a folder reached through several symlinks counts once per path) or `fileutils.MaxUncompressedSize` bytes. Large folders are read and sent on every render.
+`Save()` on a folder-loaded report packages every readable, non-hidden file in the folder (unreadable files and broken symlinks are skipped). A file name that is not portable inside a ZIP (a ".." segment, a drive-letter prefix such as "a:", or a leading backslash) fails Save() with fileutils.ErrUnportableName. It skips root-level `_gen_*` files left by older versions, and it fails if `index.html` is missing or the folder is nested deeper than 32 levels. It also fails with `fileutils.ErrZipTooLarge` past 10,000 files and folders (a folder reached through several symlinks counts once per path) or `fileutils.MaxUncompressedSize` bytes. The same limits, plus 1,024-byte names and 32 levels, apply to every `Save()`, not only folder reports. Large folders are read and sent on every render.
 
 A `data.json` in the report supplies default data. It must contain a JSON object (empty files and `null` are treated as no data; a UTF-8 byte-order mark is allowed); anything else makes every render fail with `invalid data.json`.
 
@@ -351,7 +351,7 @@ zfs.Remove("file.txt")
 data, err := zfs.Save()
 ```
 
-Loading a `.zpt` fails with `fileutils.ErrZipTooLarge` when its total uncompressed size exceeds `fileutils.MaxUncompressedSize` (default 512 MiB). It also fails when the archive has more than 10,000 entries, or an entry name longer than 1,024 bytes or nested deeper than 32 folders. `MaxUncompressedSize` is process-wide: set it once at start-up, before any load. Loads running at the same time can each use up to the limit. `zfs.Clone()` returns an independent copy.
+Loading a `.zpt` fails with `fileutils.ErrZipTooLarge` when its total uncompressed size exceeds `fileutils.MaxUncompressedSize` (default 512 MiB). It also fails when the archive has more than 10,000 entries, or an entry name longer than 1,024 bytes or nested deeper than 32 folders. `MaxUncompressedSize` is process-wide: set it once at start-up, before any load. Loads running at the same time can each use up to the limit. `ZipFs.Save()`, and so `ReportFile.Save()`, `Build`/`BuildZipFs`/`BuildFromReportFile` and every PDF render, fail under the same limits, and `zfs.CheckLimits()` reports it without serialising. `ZipFs.Save`, `ReportFile.Save`, `CheckLimits` and `BuildFromReportFile` return an error matching `errors.Is(err, fileutils.ErrZipTooLarge)`; `Build`/`BuildZipFs` report it as text in `BuildResult`, and renders as text in `JobResult.Error`. `zfs.Clone()` returns an independent copy.
 
 ### DiskFs
 

@@ -22,11 +22,11 @@ var (
 	ErrOutsideFolder = fmt.Errorf("%w: resolves outside the folder", ErrInvalidPath)
 	// ErrUnportableName is returned for names a package must not contain ("..", drive letters, rooted backslashes).
 	ErrUnportableName = fmt.Errorf("%w: not a portable file name", ErrInvalidPath)
-	// ErrZipTooLarge is returned when a ZIP or a folder snapshot exceeds MaxUncompressedSize or the entry limits.
+	// ErrZipTooLarge is returned when a ZIP, a folder snapshot or a saved ZipFs exceeds MaxUncompressedSize or the entry limits.
 	ErrZipTooLarge = errors.New("zip content exceeds size limit")
 )
 
-// MaxUncompressedSize is the maximum total uncompressed size accepted when loading a ZIP or snapshotting a folder.
+// MaxUncompressedSize is the maximum total uncompressed size accepted when loading a ZIP, snapshotting a folder or saving a ZipFs (so every build and render).
 // Values <= 0 mean the default (512 MiB). It is process-wide: set it once before any
 // load, and never while loads may be running. Concurrent loads can each use up to the limit.
 var MaxUncompressedSize int64 = defaultMaxUncompressedSize
@@ -91,13 +91,10 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 		if err != nil {
 			return err
 		}
-		content, err := io.ReadAll(io.LimitReader(rc, saturatingInc(remaining)))
+		content, err := readAtMost(rc, remaining)
 		rc.Close()
 		if err != nil {
 			return err
-		}
-		if int64(len(content)) > remaining {
-			return ErrZipTooLarge
 		}
 		remaining -= int64(len(content))
 
@@ -105,6 +102,18 @@ func loadZipEntries(zfs *ZipFs, files []*zip.File) error {
 		zfs.cache.Add(name, false)
 	}
 	return nil
+}
+
+// readAtMost reads r to EOF, returning ErrZipTooLarge without reading further once more than limit bytes arrive.
+func readAtMost(r io.Reader, limit int64) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(r, saturatingInc(limit)))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > limit {
+		return nil, ErrZipTooLarge
+	}
+	return content, nil
 }
 
 // saturatingInc returns n+1, or n when n+1 would overflow.
@@ -294,12 +303,8 @@ func (zfs *ZipFs) Remove(name string) error {
 	return nil
 }
 
-// Save serializes the ZipFs to ZIP format bytes.
-func (zfs *ZipFs) Save() ([]byte, error) {
-	buf := &bytes.Buffer{}
-	writer := zip.NewWriter(buf)
-
-	// Collect and sort directories
+// dirNames returns the sorted folder entries Save writes: every ancestor of every file.
+func (zfs *ZipFs) dirNames() []string {
 	dirs := make(map[string]bool)
 	for name := range zfs.files {
 		dir := path.Dir(name)
@@ -314,9 +319,45 @@ func (zfs *ZipFs) Save() ([]byte, error) {
 		dirNames = append(dirNames, dir)
 	}
 	sort.Strings(dirNames)
+	return dirNames
+}
+
+// CheckLimits returns ErrZipTooLarge when Save's output would not load: more than
+// MaxUncompressedSize bytes, more than 10,000 files and folders, or an entry name
+// longer than 1,024 bytes or nested deeper than 32 folders.
+func (zfs *ZipFs) CheckLimits() error {
+	dirs := zfs.dirNames()
+	if len(zfs.files)+len(dirs) > maxZipEntries {
+		return fmt.Errorf("%w: more than %d entries", ErrZipTooLarge, maxZipEntries)
+	}
+
+	// Folder entries need no check of their own: every folder is a proper prefix of
+	// some file name, which is longer and at least as deep, so that file fails first.
+	var sum int64
+	for name, content := range zfs.files {
+		if len(name) > maxZipNameLength || strings.Count(name, "/") > maxSnapshotDepth {
+			return fmt.Errorf("%w: entry name too long or nested too deep: %.64q", ErrZipTooLarge, name)
+		}
+		sum += int64(len(content))
+	}
+	if sum > zipLimit() {
+		return fmt.Errorf("%w: more than %d bytes", ErrZipTooLarge, zipLimit())
+	}
+	return nil
+}
+
+// Save serializes the ZipFs to ZIP format bytes.
+// It fails with ErrZipTooLarge when the result would exceed the limits applied on load.
+func (zfs *ZipFs) Save() ([]byte, error) {
+	if err := zfs.CheckLimits(); err != nil {
+		return nil, err
+	}
+
+	buf := &bytes.Buffer{}
+	writer := zip.NewWriter(buf)
 
 	// Write directories
-	for _, dir := range dirNames {
+	for _, dir := range zfs.dirNames() {
 		_, err := writer.Create(dir + "/")
 		if err != nil {
 			return nil, err

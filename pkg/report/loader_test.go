@@ -319,7 +319,7 @@ func TestParseManifest_ReportMustBeLocal(t *testing.T) {
 		b, _ := json.Marshal(m)
 		return b
 	}
-	for _, r := range []string{"../x.html", "x:out.html", "a/../../x.html", `..\x.html`, "..", ".", "a/.."} {
+	for _, r := range []string{"../x.html", "x:out.html", "a/../../x.html", `..\x.html`, "..", ".", "a/..", `sub\out.html`} {
 		r := r
 		if _, err := parseManifest(build(&r)); !errors.Is(err, ErrInvalidManifest) {
 			t.Errorf("report %q: err = %v, want ErrInvalidManifest", r, err)

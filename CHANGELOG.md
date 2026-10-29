@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 
 - **The default client refuses redirects to another host.** A deployment where zipreport-server answers with a redirect to another host, another port, or another spelling of the hostname (including an explicit default port such as `:80`) now fails with `processor.ErrRedirectRefused`. Point the URL at the final host.
 - **`api.RenderPDF` has a new signature** (`opts ...processor.ServerOption`). Calls still compile; code that stores `api.RenderPDF` in a variable whose type spells out the old func type does not.
+- **Building or saving a package that `NewZipFsFromBytes` would refuse now fails** with `fileutils.ErrZipTooLarge`. This includes the upload of a render: a render whose package would exceed the limits fails with "failed to prepare report" instead of sending it. A `.zpt` built just under a limit can therefore build and load but fail every render once `report.html` and `_gen_*` images are added; leave headroom. Packages written by other tools without folder entries gain one entry per folder when re-saved, and folder renders with entry names over 1,024 bytes now fail.
 
 ### Security
 
@@ -18,6 +19,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 ### Changed
 
 - For folder templates, a MIME reference whose case differs from the file name (macOS, Windows) or that uses backslashes (Windows) is no longer embedded, and a symlink into a hidden folder is no longer served or embedded.
+- `zipreport build`/`BuildZipFs` no longer package root-level `_gen_*` files, matching folder renders and `Save()`.
 - Failing commands no longer print the error twice (cobra's `Error:` line is gone; the error is printed once, after the usage text). An unknown command no longer prints the `Run 'zipreport --help' for usage.` hint.
 
 ### Added
@@ -25,6 +27,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 - `RenderContext` / `RenderDefaultsContext` / `ZipReportProcessor.ProcessContext` / `ServerBackend.RenderContext` / `processor.ContextRenderBackend` / `processor.CheckRedirect`.
 - `api.RenderPDF` accepts `...processor.ServerOption`.
 - `fileutils.IsServable`.
+- `ZipFs.CheckLimits()`.
 - `zipreport render` (HTML and MIME, no server needed).
 
 ### Fixed

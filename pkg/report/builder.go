@@ -156,6 +156,14 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 			return nil
 		}
 
+		// Root-level _gen_* entries are images left by earlier renders; folder renders skip them too
+		if filepath.Dir(path) == absPath && strings.HasPrefix(d.Name(), "_gen_") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
 		// Handle symlinks
 		if d.Type()&os.ModeSymlink != 0 {
 			if !opts.FollowSymlinks {
@@ -233,6 +241,10 @@ func BuildZipFs(srcDir string, opts *BuildOptions) (*fileutils.ZipFs, *BuildResu
 		}
 	}
 
+	if err := zfs.CheckLimits(); err != nil {
+		result.errors = append(result.errors, err.Error())
+	}
+
 	// A build that skipped any file is not a successful build
 	if len(result.errors) > 0 {
 		result.success = false
@@ -253,6 +265,9 @@ func BuildFromReportFile(report *ReportFile) (*fileutils.ZipFs, error) {
 		return nil, err
 	}
 	if err := report.checkRequired(zfs); err != nil {
+		return nil, err
+	}
+	if err := zfs.CheckLimits(); err != nil {
 		return nil, err
 	}
 	return zfs, nil

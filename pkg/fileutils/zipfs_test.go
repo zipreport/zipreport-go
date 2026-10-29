@@ -710,3 +710,113 @@ func TestNewZipFsFromBytes_NameLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestZipFsSave_OverSizeLimitFails(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	zfs := NewZipFs()
+	_ = zfs.Add("a.txt", bytes.Repeat([]byte("x"), 600), false)
+	_ = zfs.Add("b.txt", bytes.Repeat([]byte("x"), 600), false)
+	data, err := zfs.Save()
+	if !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+	}
+	if data != nil {
+		t.Error("Save() returned data on error")
+	}
+}
+
+func TestZipFsSave_TooManyEntriesFails(t *testing.T) {
+	zfs := NewZipFs()
+	for i := 0; i < maxZipEntries+1; i++ {
+		_ = zfs.Add(fmt.Sprintf("f%d", i), nil, false)
+	}
+	if _, err := zfs.Save(); !errors.Is(err, ErrZipTooLarge) {
+		t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+	}
+}
+
+func TestZipFsSave_AtSizeLimitLoads(t *testing.T) {
+	setMaxUncompressed(t, 1024)
+	zfs := NewZipFs()
+	_ = zfs.Add("a.txt", bytes.Repeat([]byte("x"), 1024), false)
+	data, err := zfs.Save()
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if _, err := NewZipFsFromBytes(data); err != nil {
+		t.Errorf("saved data does not load: %v", err)
+	}
+}
+
+func TestZipFsSave_ZeroLimitMeansDefault(t *testing.T) {
+	setMaxUncompressed(t, 0)
+	zfs := NewZipFs()
+	_ = zfs.Add("a.txt", []byte("x"), false)
+	if _, err := zfs.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+}
+
+func TestZipFsSave_FoldersCountAsEntries(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		ok     bool
+	}{
+		{"one folder, 10000 entries", "d/", true},
+		{"two folders, 10001 entries", "d/e/", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			zfs := NewZipFs()
+			for i := 0; i < maxZipEntries-1; i++ {
+				_ = zfs.Add(fmt.Sprintf("%sf%d", tt.prefix, i), nil, false)
+			}
+			data, err := zfs.Save()
+			if !tt.ok {
+				if !errors.Is(err, ErrZipTooLarge) {
+					t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if _, err := NewZipFsFromBytes(data); err != nil {
+				t.Errorf("saved data does not load: %v", err)
+			}
+		})
+	}
+}
+
+func TestZipFsSave_NameLimits(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		ok   bool
+	}{
+		{"32 levels", strings.Repeat("a/", 32) + "f", true},
+		{"33 levels", strings.Repeat("a/", 33) + "f", false},
+		{"1024-byte name", strings.Repeat("n", 1024), true},
+		{"1025-byte name", strings.Repeat("n", 1025), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			zfs := NewZipFs()
+			_ = zfs.Add(tt.file, []byte("x"), false)
+			data, err := zfs.Save()
+			if !tt.ok {
+				if !errors.Is(err, ErrZipTooLarge) {
+					t.Fatalf("Save() error = %v, want ErrZipTooLarge", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if _, err := NewZipFsFromBytes(data); err != nil {
+				t.Errorf("saved data does not load: %v", err)
+			}
+		})
+	}
+}

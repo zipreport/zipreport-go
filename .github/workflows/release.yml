@@ -9,8 +9,26 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Test
+        run: go test -race ./...
+
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -74,6 +92,7 @@ jobs:
 
   sbom:
     name: Generate SBOM
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zipreport/miya"
 	"github.com/zipreport/zipreport-go/pkg/fileutils"
 	"github.com/zipreport/zipreport-go/pkg/processor"
 	"github.com/zipreport/zipreport-go/pkg/report"
+	"github.com/zipreport/zipreport-go/pkg/template"
 )
 
 // mockBackend is a test backend that returns predefined data
@@ -366,6 +369,34 @@ func TestBaseReport_Render_NoImageAccumulation(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("payload has %d _gen_ files, want 1 (%v)", n, zfs.Files())
+	}
+}
+
+func TestBaseReport_Render_ReportWrapperWritesIntoCopy(t *testing.T) {
+	rf := newIsolationReport(t, "{{ 'hello'|stash }}")
+	w := template.FuncReportWrapper(func(env *miya.Environment, r *report.ReportFile) error {
+		return env.AddFilter("stash", func(val interface{}, args ...interface{}) (interface{}, error) {
+			if r == nil {
+				return nil, errors.New("no report")
+			}
+			return "", r.Add("note.txt", []byte(fmt.Sprint(val)), true)
+		})
+	})
+	cb := &capturingBackend{}
+	result := NewZipReportWithBackend(cb).RenderDefaults(rf, nil, w)
+	if !result.Success {
+		t.Fatalf("render failed: %s", result.Error)
+	}
+	zfs, err := fileutils.NewZipFsFromBytes(cb.payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := zfs.GetBytes("note.txt")
+	if err != nil || string(b) != "hello" {
+		t.Errorf("note.txt = %q, %v; want hello", b, err)
+	}
+	if rf.Exists("note.txt") {
+		t.Error("original report was modified")
 	}
 }
 

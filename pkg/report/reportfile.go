@@ -154,6 +154,8 @@ func copyTree(fs fileutils.FsInterface, zfs *fileutils.ZipFs, src, dst string, d
 }
 
 // GetParam retrieves a manifest field by name with a default value.
+//
+// Deprecated: read the field from GetManifest() instead. It will be removed in v2.
 func (r *ReportFile) GetParam(name string, defaultVal interface{}) interface{} {
 	switch name {
 	case "title":

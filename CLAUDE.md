@@ -57,7 +57,7 @@ ZIPREPORT_URL="http://localhost:6543" go run main.go output.pdf
 
 ### Processors
 - `ServerBackend` - Renders PDFs via zipreport-server HTTP API
-- `LocalBackend` - Stub for future local rendering (not yet implemented)
+- `LocalBackend` - Deprecated stub (Render always returns ErrNotImplemented); removal planned for v2
 - `MIMEProcessor` - Generates MIME email messages with embedded resources
 
 ### Template Rendering

@@ -38,7 +38,7 @@ func (l *ReportFileLoader) IsCached(name string) bool {
 	return false
 }
 
-// ListTemplates returns a list of all available templates.
+// ListTemplates satisfies miya's Loader interface. It reports which of index.html, base.html and layout.html exist; it is not a full listing.
 func (l *ReportFileLoader) ListTemplates() ([]string, error) {
 	// Return common template files that might exist
 	var templates []string

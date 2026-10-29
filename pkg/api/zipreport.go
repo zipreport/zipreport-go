@@ -80,7 +80,7 @@ func NewZipReport(url, apiKey string, opts ...processor.ServerOption) *ZipReport
 }
 
 // NewZipReportWithBackend creates a ZipReport with a custom backend.
-// This allows using alternative backends (e.g., LocalBackend in the future).
+// This allows using alternative backends (e.g. a test double or your own renderer).
 func NewZipReportWithBackend(backend processor.RenderBackend) *ZipReport {
 	return &ZipReport{
 		BaseReport: BaseReport{

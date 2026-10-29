@@ -144,6 +144,7 @@ Implementations:
 
 - `FuncEnvironmentWrapper` - Function-based wrapper
 - `ChainedWrapper` - Combines multiple wrappers
+- `FuncReportWrapper` - Function-based wrapper that also receives the ReportFile being rendered
 
 #### Filters
 

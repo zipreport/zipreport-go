@@ -260,3 +260,5 @@ dateWrapper := template.FuncEnvironmentWrapper(func(env *miya.Environment) {
 chain := template.NewChainedWrapper(currencyWrapper, dateWrapper)
 renderer := template.NewMiyaRender(zpt, template.WithWrapper(chain))
 ```
+
+When `MiyaRender` (and so every `api` render) applies a `ChainedWrapper`, it passes the report to the `ReportWrapper`s inside it, nested chains included. Calling `chain.Configure(env)` yourself, or wrapping a chain in your own type, passes no report: report wrappers there receive `nil`, so a `FuncReportWrapper` should check `r != nil`. A report wrapper's error fails the render; for `api` renders it appears in `JobResult.Error` as text (`template rendering failed: environment wrapper: ...`), not as a wrapped error.

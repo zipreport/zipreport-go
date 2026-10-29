@@ -7,6 +7,8 @@ var ErrNotImplemented = errors.New("not yet implemented")
 
 // LocalBackend renders PDFs locally using a headless browser.
 // This is a stub for future implementation.
+//
+// Deprecated: LocalBackend is not implemented; Render always returns ErrNotImplemented. Use ServerBackend. It will be removed in v2.
 type LocalBackend struct {
 	// Configuration options for local rendering
 	chromePath string
@@ -14,9 +16,13 @@ type LocalBackend struct {
 }
 
 // LocalOption configures a LocalBackend.
+//
+// Deprecated: see LocalBackend.
 type LocalOption func(*LocalBackend)
 
 // WithChromePath sets the path to the Chrome/Chromium executable.
+//
+// Deprecated: see LocalBackend.
 func WithChromePath(path string) LocalOption {
 	return func(b *LocalBackend) {
 		b.chromePath = path
@@ -24,6 +30,8 @@ func WithChromePath(path string) LocalOption {
 }
 
 // WithLocalTimeout sets the rendering timeout in seconds.
+//
+// Deprecated: see LocalBackend.
 func WithLocalTimeout(seconds int) LocalOption {
 	return func(b *LocalBackend) {
 		b.timeout = seconds
@@ -31,6 +39,8 @@ func WithLocalTimeout(seconds int) LocalOption {
 }
 
 // NewLocalBackend creates a new LocalBackend.
+//
+// Deprecated: see LocalBackend.
 func NewLocalBackend(opts ...LocalOption) *LocalBackend {
 	b := &LocalBackend{
 		timeout: 120,

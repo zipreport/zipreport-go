@@ -159,8 +159,8 @@ func (r *MiyaRender) RenderTemplate(templateName string, data map[string]interfa
 	}
 
 	// Apply wrapper if present
-	if r.wrapper != nil {
-		r.wrapper.Configure(r.env)
+	if err := r.applyWrapper(); err != nil {
+		return "", fmt.Errorf("environment wrapper: %w", err)
 	}
 
 	// Load and compile template
@@ -239,8 +239,8 @@ func (r *MiyaRender) RenderString(source string, data map[string]interface{}) (s
 		return "", err
 	}
 	// Apply wrapper if present
-	if r.wrapper != nil {
-		r.wrapper.Configure(r.env)
+	if err := r.applyWrapper(); err != nil {
+		return "", fmt.Errorf("environment wrapper: %w", err)
 	}
 
 	// Create context from data
@@ -257,3 +257,17 @@ var (
 	ErrRenderFailed     = errors.New("render failed")
 	ErrRendererUsed     = errors.New("MiyaRender already used; create a new renderer for each render")
 )
+
+// applyWrapper configures the environment, passing the report to report-aware wrappers.
+func (r *MiyaRender) applyWrapper() error {
+	switch w := r.wrapper.(type) {
+	case nil:
+	case *ChainedWrapper:
+		return w.configureReport(r.env, r.report)
+	case ReportWrapper:
+		return w.ConfigureReport(r.env, r.report)
+	default:
+		w.Configure(r.env)
+	}
+	return nil
+}

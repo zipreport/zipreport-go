@@ -236,6 +236,56 @@ func TestRenderMIME_ToJSONDataDoesNotEmbedFiles(t *testing.T) {
 	}
 }
 
+// tojson output is unescaped by design; inside an attribute, data must still not be able to forge a quoted src
+func TestRenderMIME_ToJSONInAttributeDoesNotEmbedFiles(t *testing.T) {
+	tests := []struct {
+		name, html, data string
+	}{
+		{"single_quoted", `<html><div data-x='{{ d|tojson }}'></div></html>`, `x' src='secret.txt' y='`},
+		{"unquoted", `<html><div data-x={{ d|tojson }}></div></html>`, `a src='secret.txt' b`},
+		{"double_quoted", `<html><div data-x="{{ d|tojson }}"></div></html>`, `x" src="secret.txt`},
+	}
+	// Positive control: an author-written src must still embed, or every case above passes vacuously
+	t.Run("author_src_embeds", func(t *testing.T) {
+		zfs := fileutils.NewZipFs()
+		_ = zfs.Add("index.html", []byte(`<html><div data-x='{{ d|tojson }}'></div><img src='secret.txt'></html>`), false)
+		_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+		_ = zfs.Add("secret.txt", []byte("SECRETCONTENT"), false)
+		rf, err := report.LoadZipFs(zfs)
+		if err != nil {
+			t.Fatalf("LoadZipFs: %v", err)
+		}
+		result := RenderMIME(rf, map[string]interface{}{"d": map[string]interface{}{"s": "x"}})
+		if !result.Success {
+			t.Fatalf("RenderMIME failed: %s", result.Error)
+		}
+		if !strings.Contains(string(result.Report), "filename=secret.txt") {
+			t.Errorf("author-written src was not embedded:\n%s", result.Report)
+		}
+	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			zfs := fileutils.NewZipFs()
+			_ = zfs.Add("index.html", []byte(tt.html), false)
+			_ = zfs.Add("manifest.json", []byte(`{"title":"T","author":"A","version":"1","description":"D"}`), false)
+			_ = zfs.Add("secret.txt", []byte("SECRETCONTENT"), false)
+			rf, err := report.LoadZipFs(zfs)
+			if err != nil {
+				t.Fatalf("LoadZipFs: %v", err)
+			}
+
+			result := RenderMIME(rf, map[string]interface{}{"d": map[string]interface{}{"s": tt.data}})
+			if !result.Success {
+				t.Fatalf("RenderMIME failed: %s", result.Error)
+			}
+			out := string(result.Report)
+			if strings.Contains(out, "Content-ID:") || strings.Contains(out, "filename=secret.txt") {
+				t.Errorf("data-controlled text embedded a report file:\n%s", out)
+			}
+		})
+	}
+}
+
 // capturingBackend records the ZPT payload and returns its rendered report.html as the "PDF"
 type capturingBackend struct {
 	mu       sync.Mutex

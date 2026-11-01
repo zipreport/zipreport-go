@@ -26,7 +26,7 @@ All notable changes to this project are documented here. Versions follow [Semant
   - Go values that relied on their type to skip autoescape (such as `html/template.HTML`), in render data as well as from custom filters and globals, are escaped; use `runtime.SafeValue` or `runtime.Markup`;
   - Go code that uses miya's API through an `EnvironmentWrapper` must follow miya's `Breaking (Go)` entries (for example, macros are `*runtime.Macro` values);
   - two strings joined with `+` always concatenate: with `data.json` `{"a": "5", "b": "1"}`, `{{ a + b }}` prints `51` (it printed `6`). Numbers stored as strings must be converted before adding (`a|int + b|int`, or `|float`); a string plus a number still adds (`a + 1` is `6`);
-  - infinite and NaN numbers print `inf`, `-inf` and `nan`.
+  - infinite and NaN numbers print `inf`, `-inf` and `nan`;
   - some filters fail instead of guessing: `sum` over `none` or non-numeric items, `replace` with a count that is not a whole number, `first`/`last`/`list` on a value that is not a list, and integer arguments (widths, counts) too large for Go's `int`;
   - with autoescape off (`AutoEscape: false`), filters keep `|safe` input safe, so such a value is not escaped again if it is later printed with autoescape on.
 

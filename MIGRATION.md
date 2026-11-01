@@ -2,6 +2,44 @@
 
 This guide covers upgrading between ZipReport Go releases. It lists every behaviour change that can break an existing setup and says what to do about it. For the full list of changes, including additions, see [CHANGELOG.md](CHANGELOG.md).
 
+## 1.1.x to 1.2.0
+
+Most applications upgrade without code changes. Check the table below; each row links to the details.
+
+| If you... | Then |
+|---|---|
+| use macros, imports, or `{% set %}` inside loops in templates | check the template changes ([details](#templates-use-miya-v030-jinja2-compatible-rendering)) |
+| add numbers that `data.json` stores as strings (`"5"`) with `+` | convert them first with `\|int` or `\|float` ([details](#templates-use-miya-v030-jinja2-compatible-rendering)) |
+| pass keyword arguments to custom filters from an `EnvironmentWrapper` | declare the filter's parameters ([details](#templates-use-miya-v030-jinja2-compatible-rendering)) |
+
+### Breaking changes
+
+#### Templates use miya v0.3.0: Jinja2-compatible rendering
+
+zipreport-go now uses miya v0.3.0, which follows Jinja2 much more closely. Changes most likely to affect a report, and what to do:
+
+- macro, `caller()`, `{% set %}...{% endset %}` and `{% filter %}` output is no longer escaped a second time, so `|safe` on macro calls is no longer needed (keeping it is harmless);
+- imported templates no longer see render data; write `{% import "x.html" as x with context %}` where a macro reads data that is not passed as an argument;
+- a macro no longer sees the caller's loop variables or `{% set %}` values (`{% for row in rows %}{{ m() }}{% endfor %}` with `{{ row }}` inside `m` prints nothing); pass them as arguments;
+- a `{% set %}` inside an `{% include %}`d template no longer changes the including template;
+- a `{% set %}` inside a `for` loop no longer carries over to the next iteration; use `namespace()`;
+- `unique` ignores case by default (`['a', 'A']|unique` is `['a']`); pass `case_sensitive=true` to keep both;
+- `{% for k in d %}` over a dict yields its keys; use `d.items()` or `d.values()`;
+- `{{ a or b }}` prints a value, not `true`/`false`; `~` binds tighter than `+`; `//` and `%` floor like Python;
+- `truncate` keeps strings up to 5 characters over the length (`leeway`); pass `leeway=0` where text must fit a fixed-width cell;
+- whitespace control (`trim_blocks` and `lstrip_blocks`, on by default in zipreport-go) works like Jinja2, so indentation in the HTML may change;
+- `{% set x.y = … %}` and `{% set x['k'] = … %}` work only on `namespace()` objects; assigning into a map or list from the render data is now an error;
+- image filter keyword arguments, which used to be ignored, now apply (`png(chart, width=400)` sets the width), so a template written with keywords may change layout;
+- a keyword argument to a filter that does not declare it is an error, including zipreport-go's `json` filter, which takes no arguments (`json(indent=2)`); custom filters added through an `EnvironmentWrapper` must declare theirs with `env.SetFilterParams` or `env.AddFilterWithParams`;
+- Go values that relied on their type to skip autoescape (such as `html/template.HTML`), in render data as well as from custom filters and globals, are escaped; use `runtime.SafeValue` or `runtime.Markup`;
+- Go code that uses miya's API through an `EnvironmentWrapper` must follow miya's `Breaking (Go)` entries (for example, macros are `*runtime.Macro` values);
+- two strings joined with `+` always concatenate: with `data.json` `{"a": "5", "b": "1"}`, `{{ a + b }}` prints `51` (it printed `6`). Numbers stored as strings must be converted before adding (`a|int + b|int`, or `|float`); a string plus a number still adds (`a + 1` is `6`);
+- infinite and NaN numbers print `inf`, `-inf` and `nan`.
+- some filters fail instead of guessing: `sum` over `none` or non-numeric items, `replace` with a count that is not a whole number, `first`/`last`/`list` on a value that is not a list, and integer arguments (widths, counts) too large for Go's `int`;
+- with autoescape off (`AutoEscape: false`), filters keep `|safe` input safe, so such a value is not escaped again if it is later printed with autoescape on.
+
+miya's CHANGELOG for v0.3.0 lists every change.
+
 ## 1.0.x to 1.1.0
 
 Most applications upgrade without code changes. Check the table below; each row links to the details.

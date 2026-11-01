@@ -9,6 +9,28 @@ All notable changes to this project are documented here. Versions follow [Semant
 - **The default client refuses redirects to another host.** A deployment where zipreport-server answers with a redirect to another host, another port, or another spelling of the hostname (including an explicit default port such as `:80`) now fails with `processor.ErrRedirectRefused`. Point the URL at the final host.
 - **`api.RenderPDF` has a new signature** (`opts ...processor.ServerOption`). Calls still compile; code that stores `api.RenderPDF` in a variable whose type spells out the old func type does not.
 - **Building or saving a package that `NewZipFsFromBytes` would refuse now fails** with `fileutils.ErrZipTooLarge`. This includes the upload of a render: a render whose package would exceed the limits fails with "failed to prepare report" instead of sending it. A `.zpt` built just under a limit can therefore build and load but fail every render once `report.html` and `_gen_*` images are added; leave headroom. Packages written by other tools without folder entries gain one entry per folder when re-saved, and folder renders with entry names over 1,024 bytes now fail.
+- **Templates render with miya v0.3.0, which follows Jinja2 much more closely.** The shipped example templates render the same apart from whitespace in one. Changes most likely to affect a report:
+  - macro, `caller()`, `{% set %}...{% endset %}` and `{% filter %}` output is no longer escaped a second time, so `|safe` on macro calls is no longer needed (keeping it is harmless);
+  - imported templates no longer see render data; write `{% import "x.html" as x with context %}` where a macro reads data that is not passed as an argument;
+  - a macro no longer sees the caller's loop variables or `{% set %}` values (`{% for row in rows %}{{ m() }}{% endfor %}` with `{{ row }}` inside `m` prints nothing); pass them as arguments;
+  - a `{% set %}` inside an `{% include %}`d template no longer changes the including template;
+  - a `{% set %}` inside a `for` loop no longer carries over to the next iteration; use `namespace()`;
+  - `unique` ignores case by default (`['a', 'A']|unique` is `['a']`); pass `case_sensitive=true` to keep both;
+  - `{% for k in d %}` over a dict yields its keys; use `d.items()` or `d.values()`;
+  - `{{ a or b }}` prints a value, not `true`/`false`; `~` binds tighter than `+`; `//` and `%` floor like Python;
+  - `truncate` keeps strings up to 5 characters over the length (`leeway`); pass `leeway=0` where text must fit a fixed-width cell;
+  - whitespace control (`trim_blocks` and `lstrip_blocks`, on by default in zipreport-go) works like Jinja2, so indentation in the HTML may change;
+  - `{% set x.y = … %}` and `{% set x['k'] = … %}` work only on `namespace()` objects; assigning into a map or list from the render data is now an error;
+  - image filter keyword arguments, which used to be ignored, now apply (`png(chart, width=400)` sets the width), so a template written with keywords may change layout;
+  - a keyword argument to a filter that does not declare it is an error, including zipreport-go's `json` filter, which takes no arguments (`json(indent=2)`); custom filters added through an `EnvironmentWrapper` must declare theirs with `env.SetFilterParams` or `env.AddFilterWithParams`;
+  - Go values that relied on their type to skip autoescape (such as `html/template.HTML`), in render data as well as from custom filters and globals, are escaped; use `runtime.SafeValue` or `runtime.Markup`;
+  - Go code that uses miya's API through an `EnvironmentWrapper` must follow miya's `Breaking (Go)` entries (for example, macros are `*runtime.Macro` values);
+  - two strings joined with `+` always concatenate: with `data.json` `{"a": "5", "b": "1"}`, `{{ a + b }}` prints `51` (it printed `6`). Numbers stored as strings must be converted before adding (`a|int + b|int`, or `|float`); a string plus a number still adds (`a + 1` is `6`);
+  - infinite and NaN numbers print `inf`, `-inf` and `nan`.
+  - some filters fail instead of guessing: `sum` over `none` or non-numeric items, `replace` with a count that is not a whole number, `first`/`last`/`list` on a value that is not a list, and integer arguments (widths, counts) too large for Go's `int`;
+  - with autoescape off (`AutoEscape: false`), filters keep `|safe` input safe, so such a value is not escaped again if it is later printed with autoescape on.
+
+  miya's CHANGELOG for v0.3.0 lists every change.
 
 ### Security
 
@@ -42,6 +64,8 @@ All notable changes to this project are documented here. Versions follow [Semant
 
 - A trailing `/` in the server URL no longer produces `//v2/render`.
 - MIME now embeds references with uppercase tag and attribute names (`<IMG SRC>`), `src = "..."`, `%20`-escaped and entity-encoded references it used to miss.
+- **Macros in report templates.** Macro and `caller()` output, including an image filter inside a macro, is no longer double-escaped; imported macros can call other macros from the same file; dict literals such as `{{ {"a": 1}|length }}` work; `loop.changed` treats `1` and `1.0` as the same value.
+- **Image filters accept keyword arguments** (`png(alt="Chart", width=400)`). They used to be ignored silently.
 
 ## [1.1.1] - 2026-10-25
 

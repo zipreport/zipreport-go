@@ -37,7 +37,7 @@ In your template:
 
 ### With Arguments
 
-Arguments are positional; keyword arguments (`data=...`) are ignored. See the table below for the order.
+Pass arguments by position or by name (`png(chart_config, alt="Sales Chart", width=400)`). The table below gives the order and the names. An unknown name, or a name that repeats a positional argument, is an error.
 
 ```html
 <!-- With data argument -->

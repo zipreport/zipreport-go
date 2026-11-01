@@ -38,6 +38,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 - **The debug server and MIME embedding check the file actually read, for folder templates.** A symlink to a dotfile (config.txt -> .env, assets -> .git), a request for //index.html, and on case-insensitive or Windows disks another spelling of a file name (INDEX.HTML, ENV~1) no longer serve or embed hidden files or the raw template. .zpt files are still judged by name.
 - `info`, `list`, the debug server log and all CLI error messages print control, format and invalid UTF-8 characters escaped (`\x1b`), so a crafted `.zpt` cannot inject terminal escape sequences.
 - Text that only looks like a reference (in page text, inside `<script>`/`<style>`, in comments, or in a `data-src` attribute) no longer embeds report files in MIME messages. Before, template data rendered with `tojson` inside `<script>` could attach any non-hidden report file, such as `manifest.json` or `data.json`, to the email. A reference to `index.html/` no longer embeds the template source.
+- MIME: template data placed with `tojson` inside a single-quoted HTML attribute can no longer embed report files (miya v0.3's `tojson` escapes `'`; before, `data-x='{{ d|tojson }}'` let data forge a `src`). Data-controlled `xmlattr` keys, `|safe` data and autoescape-off output still can; see the MIME section of docs/api.md.
 
 ### Changed
 

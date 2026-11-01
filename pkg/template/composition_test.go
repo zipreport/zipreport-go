@@ -21,6 +21,7 @@ var compositionFiles = map[string]string{
 	"layouts/outer.html":   "<main>\n{% block head %}H{% endblock %}\n{% block body %}outer{% endblock %}\n</main>",
 	"layouts/inner.html":   "{% extends 'layouts/outer.html' %}{% block body %}[inner {{ super() }}]{% endblock %}",
 	"macros/m.html":        "{% macro tag(x) %}<b>{{ x }}</b>{% endmacro %}",
+	"macros/sib.html":      "{% macro inner(x) %}<i>{{ x }}</i>{% endmacro %}{% macro outer(x) %}[{{ inner(x) }}]{% endmacro %}",
 	"partials/p.html":      "<i>{{ name }}</i>",
 	"partials/nested.html": `[{% include "partials/p.html" %}]`,
 }
@@ -147,5 +148,28 @@ func TestTemplateCompositionSelfInclude(t *testing.T) {
 				t.Errorf("err = %v, want ErrMaxRecursion", err)
 			}
 		})
+	}
+}
+
+func TestTemplateCompositionImportedMacros(t *testing.T) {
+	cases := []struct{ name, index, want string }{
+		{"import_no_safe", `{% import "macros/m.html" as m %}{{ m.tag(name) }}`, "<b>N&amp;</b>"},
+		{"from_import_no_safe", `{% from "macros/m.html" import tag %}{{ tag(name) }}`, "<b>N&amp;</b>"},
+		{"import_sibling", `{% import "macros/sib.html" as s %}{{ s.outer(name) }}`, "[<i>N&amp;</i>]"},
+		{"from_import_sibling", `{% from "macros/sib.html" import outer %}{{ outer(name) }}`, "[<i>N&amp;</i>]"},
+	}
+	for _, c := range cases {
+		for _, kind := range []string{"zip", "zipclone", "dir", "dirclone"} {
+			t.Run(c.name+"/"+kind, func(t *testing.T) {
+				r := compositionReport(t, kind, c.index)
+				out, err := NewMiyaRender(r).Render(map[string]interface{}{"name": "N&"})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if out != c.want {
+					t.Fatalf("output = %q, want %q", out, c.want)
+				}
+			})
+		}
 	}
 }

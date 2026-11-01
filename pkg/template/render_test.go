@@ -2,6 +2,7 @@ package template
 
 import (
 	"errors"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -577,5 +578,100 @@ func TestMiyaRender_PlainWrapperStillConfigured(t *testing.T) {
 	}
 	if out != "P-n" {
 		t.Errorf("output %q, want P-n", out)
+	}
+}
+
+func TestMiyaRender_MacroOutputNotEscapedTwice(t *testing.T) {
+	data := map[string]interface{}{"name": "N&"}
+	cases := []struct{ name, index, want string }{
+		{"macro", `{% macro tag(x) %}<b>{{ x }}</b>{% endmacro %}{{ tag(name) }}`, "<b>N&amp;</b>"},
+		{"caller", `{% macro box() %}<div>{{ caller() }}</div>{% endmacro %}{% call box() %}<p>{{ name }}</p>{% endcall %}`, "<div><p>N&amp;</p></div>"},
+		{"set_block", `{% set x %}<b>{{ name }}</b>{% endset %}{{ x }}`, "<b>N&amp;</b>"},
+		{"local_sibling", `{% macro inner(x) %}<i>{{ x }}</i>{% endmacro %}{% macro outer(x) %}[{{ inner(x) }}]{% endmacro %}{{ outer(name) }}`, "[<i>N&amp;</i>]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if out := renderOnZip(t, c.index, "", data); out != c.want {
+				t.Errorf("Output = %q, want %q", out, c.want)
+			}
+		})
+	}
+}
+
+func TestMiyaRender_ImageFilterInMacro(t *testing.T) {
+	gen := func() []byte { return []byte{0x89, 'P', 'N', 'G'} }
+	out := renderOnZip(t, `{% macro chart(c) %}<figure>{{ c|png }}</figure>{% endmacro %}{{ chart(gen) }}`, "", map[string]interface{}{"gen": gen})
+	if !regexp.MustCompile(`^<figure><img src="_gen_\d+\.png" /></figure>$`).MatchString(out) {
+		t.Errorf("Output = %q, want <figure><img src=\"_gen_N.png\" /></figure>", out)
+	}
+}
+
+func TestMiyaRender_ImageFilterKeywordArgs(t *testing.T) {
+	gen := func() []byte { return []byte{0x89, 'P', 'N', 'G'} }
+	for _, f := range []struct{ filter, ext string }{{"png", "png"}, {"gif", "gif"}, {"jpg", "jpg"}, {"jpeg", "jpg"}, {"svg", "svg"}} {
+		t.Run(f.filter, func(t *testing.T) {
+			out := renderOnZip(t, `{{ gen|`+f.filter+`(alt="A&B", width=10, height=5, class="c") }}`, "", map[string]interface{}{"gen": gen})
+			want := `^<img src="_gen_\d+\.` + f.ext + `" alt="A&amp;B" width="10" height="5" class="c" />$`
+			if !regexp.MustCompile(want).MatchString(out) {
+				t.Errorf("Output = %q, want match for %s", out, want)
+			}
+		})
+	}
+	t.Run("keyword_after_positional", func(t *testing.T) {
+		out := renderOnZip(t, `{{ gen|png(none, "Alt", class="c") }}`, "", map[string]interface{}{"gen": gen})
+		if !regexp.MustCompile(`^<img src="_gen_\d+\.png" alt="Alt" class="c" />$`).MatchString(out) {
+			t.Errorf("Output = %q", out)
+		}
+	})
+	t.Run("data_keyword", func(t *testing.T) {
+		var got interface{}
+		dataGen := func(d interface{}) []byte { got = d; return []byte{0x89, 'P', 'N', 'G'} }
+		renderOnZip(t, `{{ g|png(data="v", alt="x") }}`, "", map[string]interface{}{"g": dataGen})
+		if got != "v" {
+			t.Errorf("generator received %#v, want \"v\"", got)
+		}
+	})
+}
+
+func TestMiyaRender_ImageFilterRoundedSize(t *testing.T) {
+	gen := func() []byte { return []byte{0x89, 'P', 'N', 'G'} }
+	data := map[string]interface{}{"gen": gen, "w": 400.4}
+	for _, c := range []struct{ name, index string }{
+		{"positional", `{{ gen|png(none, "a", w|round(2), w|round) }}`},
+		{"keyword", `{{ gen|png(alt="a", width=w|round(2), height=w|round) }}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := renderOnZip(t, c.index, "", data)
+			if !regexp.MustCompile(`^<img src="_gen_\d+\.png" alt="a" width="400" height="400" />$`).MatchString(out) {
+				t.Errorf("Output = %q", out)
+			}
+		})
+	}
+}
+
+func TestMiyaRender_DictLiteral(t *testing.T) {
+	if out := renderOnZip(t, `{{ {"a": 1, "b": 2}|length }}`, "", nil); out != "2" {
+		t.Errorf("Output = %q, want %q", out, "2")
+	}
+}
+
+func TestMiyaRender_LoopChangedMixedNumbers(t *testing.T) {
+	out := renderOnZip(t, `{% for g in [1, one] %}{{ loop.changed(g) }} {% endfor %}`, `{"one": 1}`, nil)
+	if out != "true false " {
+		t.Errorf("Output = %q, want %q", out, "true false ")
+	}
+}
+
+func TestMiyaRender_InfinityPrintsLikePython(t *testing.T) {
+	out := renderOnZip(t, `{{ big|float }}|{{ -(big|float) }}`, `{"big": "1e400"}`, nil)
+	if out != "inf|-inf" {
+		t.Errorf("Output = %q, want %q", out, "inf|-inf")
+	}
+}
+
+func TestMiyaRender_DataJSONStringsConcatenate(t *testing.T) {
+	out := renderOnZip(t, `{{ a + b }}|{{ a|int + b|int }}|{{ a + 1 }}`, `{"a": "5", "b": "1"}`, nil)
+	if out != "51|6|6" {
+		t.Errorf("Output = %q, want %q", out, "51|6|6")
 	}
 }

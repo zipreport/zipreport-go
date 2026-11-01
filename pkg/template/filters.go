@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/zipreport/miya"
+	"github.com/zipreport/miya/filters"
 	"github.com/zipreport/miya/runtime"
 	"github.com/zipreport/zipreport-go/pkg/report"
 )
@@ -27,30 +28,34 @@ type ImageFilterArgs struct {
 	Class  string
 }
 
+// imageFilterParams names the image filters' arguments, in positional order,
+// so templates can also pass them as keywords: png(alt="Chart", width=400).
+var imageFilterParams = []filters.Param{{Name: "data"}, {Name: "alt"}, {Name: "width"}, {Name: "height"}, {Name: "class"}}
+
 // registerDefaultFilters registers the default filters on the environment.
 func registerDefaultFilters(env *miya.Environment, r *report.ReportFile) error {
 	// PNG filter
-	if err := env.AddFilter("png", createImageFilter(r, "png", "image/png")); err != nil {
+	if err := env.AddFilterWithParams("png", createImageFilter(r, "png", "image/png"), imageFilterParams...); err != nil {
 		return fmt.Errorf("failed to register png filter: %w", err)
 	}
 
 	// GIF filter
-	if err := env.AddFilter("gif", createImageFilter(r, "gif", "image/gif")); err != nil {
+	if err := env.AddFilterWithParams("gif", createImageFilter(r, "gif", "image/gif"), imageFilterParams...); err != nil {
 		return fmt.Errorf("failed to register gif filter: %w", err)
 	}
 
 	// JPG filter
-	if err := env.AddFilter("jpg", createImageFilter(r, "jpg", "image/jpeg")); err != nil {
+	if err := env.AddFilterWithParams("jpg", createImageFilter(r, "jpg", "image/jpeg"), imageFilterParams...); err != nil {
 		return fmt.Errorf("failed to register jpg filter: %w", err)
 	}
 
 	// JPEG filter (alias)
-	if err := env.AddFilter("jpeg", createImageFilter(r, "jpg", "image/jpeg")); err != nil {
+	if err := env.AddFilterWithParams("jpeg", createImageFilter(r, "jpg", "image/jpeg"), imageFilterParams...); err != nil {
 		return fmt.Errorf("failed to register jpeg filter: %w", err)
 	}
 
 	// SVG filter
-	if err := env.AddFilter("svg", createImageFilter(r, "svg", "image/svg+xml")); err != nil {
+	if err := env.AddFilterWithParams("svg", createImageFilter(r, "svg", "image/svg+xml"), imageFilterParams...); err != nil {
 		return fmt.Errorf("failed to register svg filter: %w", err)
 	}
 
@@ -210,6 +215,8 @@ func toInt(v interface{}) (int, bool) {
 		return int(n), true
 	case float32:
 		return int(n), true
+	case runtime.RoundedFloat:
+		return int(n.Value), true
 	case string:
 		var i int
 		_, err := fmt.Sscanf(n, "%d", &i)
